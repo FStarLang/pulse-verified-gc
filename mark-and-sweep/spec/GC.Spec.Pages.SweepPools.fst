@@ -102,6 +102,26 @@ let step_pool (g: heap) (st: pstate) (p: nat{p < n_pages}) (c: nat{c < n_cls})
                    step g st p == (let (g1, e) = SP.sweep_page g st.pm p in (g1, SS.push_avail st p e)))
   = ()
 
+/// Small steps of `new_live`, stated apart so that its queries do not search
+/// the sweep invariant for them (they were fragile there).
+
+/// Before the sweep, only free pages are swept.
+let ready_swept_free (g0: heap) (st0: pstate) (p: nat{p < n_pages})
+  : Lemma (requires sweep_ready g0 st0 /\ (entry st0.pm p).swept)
+          (ensures (entry st0.pm p).kind == Free)
+  = ()
+
+/// The span of a page that heads no run is the page alone.
+let span_one (pm: page_map) (p: nat{p < n_pages}) (i: nat)
+  : Lemma (requires ~(LargeHead? (entry pm p).kind) /\ p <= i /\ i < p + span pm p)
+          (ensures i == p)
+  = ()
+
+/// A page that is not a pool page satisfies `pool_live` trivially.
+let not_pool_live (g: heap) (st: pstate) (i: nat{i < n_pages})
+  : Lemma (requires ~(Pool? (entry st.pm i).kind)) (ensures pool_live g st i)
+  = ()
+
 /// The new pages of the step at `p`.
 let new_live (g0 g: heap) (st0 st: pstate) (p: nat{p < n_pages}) (i: nat{i < n_pages})
   : Lemma (requires sweep_ready g0 st0 /\ inv g0 st0 g st p /\ p <= i /\ i < p + span st.pm p)
@@ -109,12 +129,16 @@ let new_live (g0 g: heap) (st0 st: pstate) (p: nat{p < n_pages}) (i: nat{i < n_p
   = inv_elim g0 st0 g st p;
     let (g', st') = step g st p in
     assert (entry st.pm p == entry st0.pm p);
-    if (entry st.pm p).swept then ()
+    if (entry st.pm p).swept then begin
+      ready_swept_free g0 st0 p;
+      span_one st.pm p i;
+      not_pool_live g st i
+    end
     else match (entry st.pm p).kind with
       | Pool c ->
         marked_pool_at g0 g st0 st p c;
         step_pool g st p c;
-        assert (i == p);
+        span_one st.pm p i;
         pool_new g st p c
       | LargeHead n ->
         marked_run_at g0 g st0 st p;

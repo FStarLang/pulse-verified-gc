@@ -165,6 +165,29 @@ let rec find_run_spec (pm: page_map) (k: pos) (j: nat)
 /// The free pages
 /// ---------------------------------------------------------------------------
 
+/// The step of `free_pages_walk`: a free page followed by blue walk stops
+/// gives blue walk stops from the free page.  Kept out of the recursion so
+/// that its query stays small (it was fragile inside it).
+let free_pages_blue_step (g: heap) (i k: nat)
+  : Lemma (requires 0 < k /\ i + k <= n_pages /\ free_page_shape g i /\
+                    steps_to g (page_base i) (page_base (i + 1)) /\
+                    (forall (b: nat). steps_to g (page_base (i + 1)) b /\ b < page_base (i + k) ==>
+                       color_at g b == Blue))
+          (ensures forall (b: nat). steps_to g (page_base i) b /\ b < page_base (i + k) ==>
+                     color_at g b == Blue)
+  = page_base_mono (i + 1) (i + k);
+    let pos (b: nat)
+      : Lemma (requires steps_to g (page_base i) b /\ b < page_base (i + k))
+              (ensures color_at g b == Blue)
+      = steps_to_le g (page_base i) b;
+        if b < page_base (i + 1) then begin
+          FStar.Math.Lemmas.distributivity_add_left i 1 page_bytes;
+          one_block_pos g (page_base i) b
+        end
+        else steps_to_det g (page_base i) (page_base (i + 1)) b
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires pos)
+
 /// The walk over `k` free pages stops only at their starts, all free.
 let rec free_pages_walk (g: heap) (pm: page_map) (i k: nat)
   : Lemma (requires i + k <= n_pages /\
@@ -181,18 +204,7 @@ let rec free_pages_walk (g: heap) (pm: page_map) (i k: nat)
       free_page_steps g i;
       free_pages_walk g pm (i + 1) (k - 1);
       steps_to_trans g (page_base i) (page_base (i + 1)) (page_base (i + k));
-      page_base_mono (i + 1) (i + k);
-      let pos (b: nat)
-        : Lemma (requires steps_to g (page_base i) b /\ b < page_base (i + k))
-                (ensures color_at g b == Blue)
-        = steps_to_le g (page_base i) b;
-          if b < page_base (i + 1) then begin
-            FStar.Math.Lemmas.distributivity_add_left i 1 page_bytes;
-            one_block_pos g (page_base i) b
-          end
-          else steps_to_det g (page_base i) (page_base (i + 1)) b
-      in
-      FStar.Classical.forall_intro (FStar.Classical.move_requires pos)
+      free_pages_blue_step g i k
     end
 
 /// ---------------------------------------------------------------------------
@@ -223,6 +235,15 @@ let run_read (g: heap) (i: nat{i < n_pages}) (k: pos) (wz: nat{wz < pow2 54}) (h
     end
     else put_obj_read g a wz x
 
+/// The rest block's first field holds the old list head.  Kept out of
+/// `run_layout`, whose context made this clause fragile.
+let run_read_link (g: heap) (i: nat{i < n_pages}) (k: pos) (wz: nat{wz < pow2 54}) (hd0: U64.t)
+  : Lemma (requires rest k (wz + 1) >= lg_min /\ rest k (wz + 1) <= pow2 54 /\
+                    (page_base i + (wz + 1) * 8) % 8 == 0 /\
+                    page_base i + (wz + 1) * 8 + 16 <= heap_size)
+          (ensures read_word (run_heap g i k wz hd0) (mk_hp_addr (page_base i + (wz + 1) * 8 + 8)) == hd0)
+  = run_read g i k wz hd0 (mk_hp_addr (page_base i + (wz + 1) * 8 + 8))
+
 /// The layout of the new run: the object, then the rest as one free block.
 let run_layout (g: heap) (i: nat{i < n_pages}) (k: pos) (wz: nat{wz < pow2 54}) (hd0: U64.t)
   : Lemma (requires i + k <= n_pages /\ rest k (wz + 1) >= 0 /\ rest k (wz + 1) < page_wsize /\
@@ -251,7 +272,10 @@ let run_layout (g: heap) (i: nat{i < n_pages}) (k: pos) (wz: nat{wz < pow2 54}) 
     page_base_mono (i + k) n_pages;
     page_base_aligned i;
     assert (e == a + (w + r) * 8);
-    FStar.Classical.forall_intro (FStar.Classical.move_requires (run_read g i k wz hd0));
+    let frame (x: hp_addr) : Lemma (U64.v x < a \/ U64.v x >= e ==> read_word g' x == read_word g x)
+      = run_read g i k wz hd0 x
+    in
+    FStar.Classical.forall_intro frame;
     let fields (x: hp_addr) : Lemma (a < U64.v x /\ U64.v x < a + w * 8 ==> read_word g' x == 0UL)
       = run_read g i k wz hd0 x
     in
@@ -260,11 +284,13 @@ let run_layout (g: heap) (i: nat{i < n_pages}) (k: pos) (wz: nat{wz < pow2 54}) 
     obj_block g' a wz;
     if r > 0 then begin
       aligned_plus_mul8 a w;
+      FStar.Math.Lemmas.distributivity_add_left w r 8;
+      assert (a + w * 8 + r * 8 == e);
       run_read g i k wz hd0 (mk_hp_addr (a + w * 8));
       blue_block_ok g' (a + w * 8) r;
       if r >= lg_min then begin
         params_ok ();
-        run_read g i k wz hd0 (mk_hp_addr (a + w * 8 + 8))
+        run_read_link g i k wz hd0
       end
     end;
     two_blocks g' a w r
@@ -554,13 +580,15 @@ let nr_rest_cell (g: heap) (st: pstate) (i: nat{i < n_pages}) (k: pos) (wz: nat{
     let a = page_base i in
     let e = page_base (i + k) in
     rest_addr i k wz;
+    (* Before the layout facts enter the context: this call's precondition
+       is arithmetic, and those quantified facts made it fragile. *)
+    rest_swept g st i k wz (U64.v y - 8);
     params_ok ();
     nr_replaces g st i k wz;
     replaces_frame_prefix g g' a e;
     run_layout g i k wz (large_head st);
     rest_obj g' a (wz + 1) (rest k (wz + 1)) (large_head st) y;
-    hd_address_spec y;
-    rest_swept g st i k wz (U64.v y - 8)
+    hd_address_spec y
 
 /// A list that leaves out an object of the heap has room for it.
 let push_len (g: heap) (hd0: U64.t) (cs: list obj_addr) (y: obj_addr)
@@ -639,6 +667,27 @@ let obj_core (g g': heap) (a: nat) (w: nat) (x: obj_addr)
     is_white_iff x g';
     LG.inside_free_blue g a x
 
+/// `obj_core` at the start of a replaced stretch: the stretch's first block
+/// was blue.  Stated with only the facts it needs, so that `nr_object` does
+/// not reach the colour through `pages_ok` (a fragile query).
+/// Its conclusion is `nr_object`'s, word for word.
+let obj_core_replaces (g g': heap) (a e: nat) (wz: nat)
+  : Lemma (requires replaces g g' a e /\ a % 8 == 0 /\ wz >= 1 /\
+                    a + (wz + 1) * 8 <= heap_size /\ words_at g' a == wz + 1 /\
+                    color_at g' a == White)
+          (ensures (let obj = LG.obj_at (a + 8) in
+                    obj =!= 0UL /\ U64.v obj >= 8 /\ U64.v obj < heap_size /\ U64.v obj % 8 == 0 /\
+                    (let x : obj_addr = obj in
+                     Seq.mem x (objects zero_addr g') /\
+                     U64.v (wosize_of_object x g') == wz /\
+                     is_white x g' /\
+                     ~(Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)))))
+  = LG.obj_at_spec (a + 8);
+    let x : obj_addr = LG.obj_at (a + 8) in
+    replaces_frame_prefix g g' a e;
+    steps_to_refl g a;
+    obj_core g g' a (wz + 1) x
+
 let run_obj (i: nat) (k: pos) (wz: nat)
   : Pure obj_addr (requires i + k <= n_pages /\ i < n_pages /\ wz + 1 > small_max /\ rest k (wz + 1) >= 0)
                   (ensures fun x -> U64.v x == page_base i + 8 /\ page_base i + (wz + 1) * 8 <= heap_size)
@@ -661,7 +710,7 @@ let nr_object (g: heap) (st: pstate) (i: nat{i < n_pages}) (k: pos) (wz: nat{wz 
                      is_white x g' /\
                      ~(Seq.mem x (objects zero_addr g) /\ ~(is_blue x g)))))
   = nr_rest g st i k wz;
-    let x = run_obj i k wz in
+    let x0 = run_obj i k wz in
     let g' = nr_heap g st i k wz in
     let a = page_base i in
     let e = page_base (i + k) in
@@ -669,11 +718,8 @@ let nr_object (g: heap) (st: pstate) (i: nat{i < n_pages}) (k: pos) (wz: nat{wz 
     params_ok ();
     cls_bounds 0;
     nr_replaces g st i k wz;
-    replaces_frame_prefix g g' a e;
     run_layout g i k wz (large_head st);
-    pages_ok_elim g st;
-    assert (page_local g st.pm i);
-    obj_core g g' a (wz + 1) x
+    obj_core_replaces g g' a e wz
 
 let nr_unswept (g: heap) (st: pstate) (i: nat{i < n_pages}) (k: pos) (wz: nat{wz < pow2 54})
   : Lemma (requires nr_ctx g st i k wz)

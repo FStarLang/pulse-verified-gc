@@ -294,6 +294,15 @@ let in_pages (h: nat) (n: pos) (i: nat) (a: nat)
   = if i < h then FStar.Math.Lemmas.lemma_mult_le_right page_bytes (i + 1) h;
     if i >= h + n then FStar.Math.Lemmas.lemma_mult_le_right page_bytes (h + n) i
 
+/// A page after a run's head, within the run, continues it.  Stated on its
+/// own so that `not_in_run` does not have Z3 instantiate `map_ok` and
+/// `run_ok` itself (a fragile query).
+let run_cont (pm: page_map) (h: nat{h < n_pages}) (j: nat{j < n_pages})
+  : Lemma (requires map_ok pm /\ LargeHead? (entry pm h).kind /\
+                    h < j /\ j < h + run_len (entry pm h).kind)
+          (ensures (entry pm j).kind == LargeCont)
+  = assert (run_ok pm h)
+
 /// A swept run lies in run pages: an address of a free or pool page is not
 /// in one.
 let not_in_run (pm: page_map) (i: nat{i < n_pages}) (a: nat)
@@ -305,5 +314,5 @@ let not_in_run (pm: page_map) (i: nat{i < n_pages}) (a: nat)
       page_base h <= a /\ a < page_base (h + run_len (entry pm h).kind)
     with begin
       in_pages h (run_len (entry pm h).kind) i a;
-      assert (run_ok pm h)
+      if i <> h then run_cont pm h i
     end
