@@ -46,7 +46,7 @@ module PUpd = GC.Gen.PromoteUpdate
 /// Under `un`, every block of the allocator's colour in use for the
 /// allocator is in use: the copies are not free for `un`.
 let copies_in_use (#s: Type0) (a: tal s) (un: free_def) : prop =
-  forall (g: heap) (x: obj_addr). in_use a.free g x /\ color_of_object x g == a.col ==> in_use un g x
+  forall (g: heap) (x: obj_addr). in_use a.free g x /\ color_of_object x g == a.col x ==> in_use un g x
 
 let copies_in_use_self (#s: Type0) (a: tal s) : Lemma (copies_in_use a a.free) = ()
 
@@ -398,7 +398,7 @@ let collect_blocks_w (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0
                     (in_use a.free g0 y ==>
                        in_use a.free r.rmajor y /\ read_word r.rmajor (hd_address y) == read_word g0 (hd_address y)) /\
                     (in_use a.free r.rmajor y /\ ~(in_use a.free g0 y) ==>
-                       color_of_object y r.rmajor == a.col /\
+                       color_of_object y r.rmajor == a.col y /\
                        (exists (m: U64.t). r.rfwd m == (y <: U64.t) /\ Seq.mem m (minor_objects minor) /\
                                       ~(is_infix_in_minor minor m)))))
   = promoted_w a minor g0 st0 roots;
@@ -505,7 +505,7 @@ let collect_blocks (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: 
                     (in_use a.free g0 y ==>
                        in_use a.free r.rmajor y /\ read_word r.rmajor (hd_address y) == read_word g0 (hd_address y)) /\
                     (in_use a.free r.rmajor y /\ ~(in_use a.free g0 y) ==>
-                       color_of_object y r.rmajor == a.col /\
+                       color_of_object y r.rmajor == a.col y /\
                        (exists (m: U64.t). r.rfwd m == (y <: U64.t) /\ Seq.mem m (minor_objects minor) /\
                                       ~(is_infix_in_minor minor m)))))
   = cpre_weaken a minor g0 st0 roots;

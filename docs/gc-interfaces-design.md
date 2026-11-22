@@ -2012,3 +2012,173 @@ rechecked at the three seeds.
   `Sweep`; `GC.Spec.Top.Iface`, `YoungInfix`, `PromoteRun`, `PagesLive`,
   `PagesMinor`, `PagesRw`, `PagesDone`, `PagesMinorOk`, `Broken`;
   `Makefile` (the two witnesses added to `ROOT_MODULES`).
+
+## 13. Stage 2c: first-fit as a second full instance
+
+The user's request (2026-11-22): first-fit as a second full instance on the
+same byte representation, swapping only the allocator and the sweep, with
+the same barrier, mark and minor collection.  akhil's first-fit allocator
+and fused sweep are called read-only; every instance proof is in my modules.
+The runs and `gc_correct` are not built yet.
+
+### 13.1 The components
+
+- **Allocator** `FFAlloc.ffa`:
+  - the state is the free-list head and the bytes below `zero_addr`
+    (`ffst = { fp; lo }`); the allocator runs on `gl h s = set_low h s.lo`,
+    as pages does;
+  - `alloc` is akhil's `Allocator.Phase.alloc_at` at the phase
+    (`gph`: Idle, Marking, `Sweeping c`), whose colour is
+    `Phase.allocation_color`: black while marking, black at or after the
+    sweep's cursor and white before it mid-sweep, white idle;
+  - `free` is blue, read from the header (`fffree`); `room` is "the
+    allocation succeeds" (`ffroom`; the tag and phase play no part,
+    `FFInst.search_obj`);
+  - the invariant (`FFWrite.fshape`) is, while marking, akhil's
+    well-formedness, a dense walk, an ascending free list (`mshape`);
+    mid-sweep at `c`, akhil's `sweep_inv_incremental` (`sshape`); idle, his
+    sweep invariant at a finished cursor (`ishape`).  Each also says the
+    walk reaches the end and every block in use has a field (`nz`, G40);
+  - `init` is one blue block from `zero_addr` to the end, its link null
+    (`FFAlloc.init_heap`, G41).
+- **Sweep** `FFSweep.ffsweep`:
+  - the progress is akhil's cursor; a block is unswept when its header is
+    at or after it (`ffunswept c o = pos o >= c`);
+  - `start` is `FusedSweep.sweep_start` (cursor at `zero_addr`);
+  - a step is one `FusedSweep.sweep_step` from the derived state
+    (`SweepPhase.Intrinsic.state_at`): one block, freed when white,
+    whitened when black, merged with a free neighbour when blue; the words
+    freed are the white block's, header included (`ffw`);
+  - `done` is `SweepPhase.Intrinsic.sweep_done` (`c + 8 >= heap_size`).
+- **Capacity** `FFFits.fffits`: the invariant, and a free-list cell
+  (`FreeList.fl_cell`) of at least `sz + 1` words, header included.
+- **Mark and barrier**: the pages collector's, unchanged (`ByteMark.bmark`,
+  `ByteBarrier.bbarrier`).
+- **Minor collection** `FFMinor.ffminor`: the same generic promotion
+  (`GC.Spec.Pages.Promote`) and pointer update, with first-fit's promotion
+  allocator `FFPromote.fftal ph`:
+  - its state is the free-list head, its invariant `fshape ph`, its free
+    akhil's at the phase (`FFAllocOk.ffree_of`: blue; mid-sweep also the
+    white blocks after the cursor, pending free), as in his own minor
+    collections (`GC.Gen.SweepPhase.Minor`);
+  - the colour of a copy depends on its address (`ffcol`, G44), and is
+    the colour rule on either side of the cursor (`FFPromote.col_rule`).
+
+### 13.2 Mid-sweep free, restated
+
+akhil's step statement (`FusedSweep.Step.sweep_inv_incremental_step`)
+counts white blocks after the cursor as free (`free_incremental`), so for
+him a step changes no block in use.  The contract's free is blue only, so a
+step frees the white block at the cursor.  `FFSweepOk` restates it, as
+`PagesFree` did for pages:
+
+- `bstep`: akhil's facts of one step (`can_sweep`, the in-use equality,
+  `same_block`, pending only shrinks), the heap from the new cursor on
+  unchanged (`FFStep.step_front`, re-derived from his exported per-case
+  statements `step_eq_black`/`_blue`/`_white`/`_merge`, G42), the walk to
+  the end, `nz` after;
+- the model clauses on the canonical readings: the cursor's block is the
+  only block of the region (`region_one`); a black block there becomes
+  white with its contents (`black_m`); a white one leaves use
+  (`white_m`); every other block in use keeps its block (`kept_m`);
+  nothing comes into use (`used_after`);
+- free words, by tiling both readings (`words_white`, `words_kept`,
+  `words_back`).  The sweep merges adjacent free blocks, so a free block
+  can disappear into a larger one; the contract counts free words, not
+  free blocks, so the merge is allowed and the proofs are per word;
+- `freed_words`: the white block's words at the cursor are the model's
+  sum (`freed_cur`, an indicator summed by `PagesFreed.sum_ind`).
+
+### 13.3 Clause by clause: pages and first-fit
+
+| Clause | Pages (§10, §11) | First-fit (this section) |
+|---|---|---|
+| State, progress | page state + low bytes; page map and cursor, unswept by page (`Graft.uw`) | free-list head + low bytes; akhil's cursor, unswept at or after it |
+| Invariant | page invariant of the phase (`MidSweepAlloc.inv_sw`) | `fshape`: akhil's well-formedness, walk and ascending list (marking), `sweep_inv_incremental` (mid-sweep; idle at a finished cursor); plus `nz` (G40) |
+| `init_at` | `PagesInst.init_ok` (all blue pages) | `FFInit.init_ok` (one blue block, own init, G41) |
+| `free_hd_at` | blue from the header | `FFInst.free_hd_ok`, the same |
+| `alloc_at`: room, header, colour | `PagesInst.alloc_m`, `colour_ok` | `FFInst.alloc_m`; `FFAllocOk.new_block` (header in `colour_at`, `colour_eq`) |
+| o's words were free | `PagesAllocOk.words_free` (generic, by tiling) | `FFAllocOk.words_free`, the same argument |
+| only o comes into use | `use_rel` (`NewOnly.new_only`) | `FFAllocOk.use_rel`, from `FFBytes.new_ok` (`alloc_at_obj_ne_excl`, `only_new_is_obj_out`) |
+| other blocks unchanged | `kept_block` | `FFAllocOk.kept_block` |
+| well formed after | `wf_after` | `FFAllocOk.wf_after` |
+| invariant after the Fill | `fill_inv`, every phase's `fields_written_away` | `FFInst.fill_inv`: `FFFill.marking_fill` (colour-blind, G43), `sweep_fill` (akhil's `alloc_sweep_phase`, `fresh_close`), idle at a finished cursor |
+| `inv_frame_at` | `PagesFrame.frame_ok` (`Cycle.Write`) | `FFFrame.frame_ok`: `FFWrite.write_phase` (akhil's `write_sweep_phase`; colour-blind while marking, G43), `recolour_marking` (`recolour_one`) |
+| `inv_start_at`, `free_white_at` | `inv_start_ok`, `free_white_ok` | `FFInst.inv_start_ok` (idle is a finished sweep, so the marking shape), `free_white_ok` |
+| Capacity | a free page, or a page of the class with a slot, or a run; under `n_pages > 0` (G34) | a free-list cell of `>= sz + 1` words; `fffits_room` (akhil's `Exact.alloc_spec_fits_succeeds`, `fl_ascending_exact`); `fffits_init` with no assumption |
+| Sweep start | `PagesSweep.start_m` (`sw_start`, tricolour from `dark_closed`) | `FFSweep.start_m` (`sweep_inv_incremental_start`, `noGreyObjects` and `tri_color_invariant` read from the model) |
+| Step granularity | one unit (pool page or large run) | one block |
+| Step: progress | `clause_progress` | `FFSweepOk.clause_rest` (the cursor's block, `oc_region`) |
+| Step: white freed, black whitened, outside kept | `clause_blocks` (`PagesFree`) | `FFSweepOk.clause_blocks` (`blocks_m`: `white_m`, `black_m`, `kept_m`, `used_after`) |
+| Step: free words exactly | `clause_words` | `FFSweepOk.clause_words` (`words_m`; merges allowed, per word) |
+| Step: `freed_words` | `clause_freed` (`freed_reindex`) | `FFSweepOk.clause_freed` (`freed_cur`, one block) |
+| Step: invariant | `clause_inv` | `clause_rest` (`bstep`: `sshape` at the new cursor) |
+| Sweep done | `PagesSweep.done_m` | `FFSweep.done_m` (`sweep_inv_incremental_end`, `used_below` by `nz`) |
+| Promotion allocator | `idle_tal`, `mark_tal`, `sw_tal pm0`; one colour per phase | `fftal ph`; colour per address (G44); `ff_contract` |
+| Promotion: pointer update keeps the invariant | `AllocTagOk.mark_inv_update`, `sw_update` | `FFPromote.upd_inv` (`upd_heads`, restated for any set, G45; `upd_fl`; akhil's `shape_transport`) |
+| Copies' colour | white mid-sweep (copies land in swept pages) | `col_rule`: black at or after the cursor, white before, as `colour_at` |
+| `minor_ok` | `PagesMinorOk.pages_minor_ok` | `FFMinorOk.ff_minor_ok`: PagesReplay ... PagesMinorOk restated over first-fit (`FFReplay` ... `FFMinorOk`); `PagesLive`, `PagesFwd`, `PagesQueue.copies` shared |
+| `live_target` mid-sweep | not white in an unswept page (`MidSweep.uw_same`) | not white at or after the cursor: akhil's `pending_free` exactly, on an aligned cursor |
+| Mark, barrier | `byte_mark_ok`, `byte_barrier_ok` | the same lemmas |
+| `components_ok` | `PagesComps.pages_components_ok`, under `n_pages > 0` | `FFComps.ff_components_ok`, unconditional |
+
+### 13.4 Gaps found
+
+| # | Gap | How it showed | Change |
+|---|---|---|---|
+| G40 | akhil's sweep steps only while `c + 8 < heap_size`, and is done after.  A block in use with no field whose header is the last word of the heap would never be swept: it stays black into the next cycle. | `FFSweep.done_m`: blocks in use must lie before a done cursor | The first-fit invariant carries `nz`: every block in use has a field.  The model's sizes are at least 1 (`size_t`, `young_ok`), and akhil's allocator rounds 0 up, so it holds throughout. |
+| G41 | akhil's `init_heap_spec` places the free block at address 0; the representation starts at `zero_addr`. | `init_at` | First-fit uses its own initial heap (`FFAlloc.init_heap`), one blue block from `zero_addr`. |
+| G42 | akhil proves that a step leaves the heap after the new cursor alone (`FusedSweep.Step.stepped`) but does not export it. | the model's frame of a step | Re-derived from his exported per-case statements (`FFStep`). |
+| G43 | akhil's allocation lemma while marking (`GC.Gen.MarkPhase.Alloc.marking_alloc_shape`) asks for his generational marking shape (`GC.Gen.Incremental.phase_shape`, with the mark's scan position and the nursery); the allocator component's marking invariant is the heap's shape only (the mark's invariant belongs to the mark component). | `inv_frame_at`, the Fill while marking | Colour-blind restatements of the well-formedness part (`FFFill.marking_fill`, `FFWrite.write_marking`, `write_wf`). |
+| G44 | The promotion's allocator (`Promote.tal`) had one colour for every copy.  First-fit mid-sweep colours a copy by its address (black at or after the cursor, white before it). | `FFPromote.fftal` | `tal.col` is a function of the address; the page instances are constant functions.  `Promote`, `Loop.copy_of`, `Collect.copies_in_use`, `collect_blocks` take the colour at the copy. |
+| G45 | akhil's "the pointer update keeps the walk and every header" (`SweptTail.update_heads`) is stated only for the blocks in use; the promotion's contract asks it for any set the update may select (`walk_ok`). | `ff_contract` | His induction (`uop_heads`, `uwa_heads`) restated for any set in `FFPromote`. |
+
+None needed a change to the top-level specification (`Iface`, `Run`).
+The promotion's `tal` is mine; the change is a generalisation, and every
+page instance and their dependents verify unchanged in substance.
+
+### 13.5 Residuals
+
+- One block per step; one step of akhil's sweep is one call of the
+  component's `step`.
+- The first-fit runs are not built; `gc_correct` is not proved.
+- Non-vacuity at this stage is the allocator's side only
+  (`FFComps.ff_nonvacuous`: the initial heap meets the invariant idle and
+  while marking, the capacity condition holds for one field, and the
+  allocation succeeds in both phases).  Witness runs with roots, reachable
+  and unreachable blocks come with the runs.
+
+### 13.6 Checking
+
+From a fresh cache per seed, in dependency order (104 files): the changed
+promotion modules (`Promote`, `PromoteInst`, `Follow`, `Loop`, `Collect`,
+`Idle`, `Mark`, `Sweep`), the byte witness and all 70 `GC.Spec.Top`
+modules (22 of them new, first-fit) without `--retry` at the seed; the 25
+unchanged downstream modules (`Promote.Sim`, `TwoPass`, `PulseVacuity`,
+`Cycle.*`, `GC.Impl.Pages.*`) with the repository's flags (`--retry 3`,
+`--z3refresh` for the Pulse code).  Rlimits at most 40, no admits or
+assumes.
+
+| Z3 seed | files | errors | warnings | total time | slowest |
+|---|---|---|---|---|---|
+| 0 | 104 | 0 | 0 | 2305 s | `ByteMark`, 137 s |
+| 1 | 104 | 0 | 0 | 2299 s | `ByteMark`, 133 s |
+| 2 | 104 | 0 | 0 | 2413 s | `ByteMark`, 137 s |
+
+One fix came from the seeds: in `PagesDone2.copy_field` (and the same in
+`FFDone2`), an inner lemma about the young pointers of a copied field timed
+out at seeds 1 and 2 in the proof's large context; it is now two top-level
+lemmas (`cov_one`, `cov_all`).  The two modules and their dependents
+(`PagesMinorOk`, `PagesComps`, `FFMinorOk`, `FFComps`) were rechecked on
+each seed's cache at the three seeds, clean.
+
+### 13.7 Files
+
+- **New**: `GC.Spec.Top.FFAlloc`, `FFBytes`, `FFFill`, `FFAllocOk`,
+  `FFInst`, `FFWrite`, `FFInit`, `FFFrame`, `FFStep`, `FFSweep`,
+  `FFSweepOk`, `FFFits`, `FFPromote`, `FFReplay`, `FFQueue`, `FFOor`,
+  `FFMinor`, `FFDone`, `FFRw`, `FFDone2`, `FFMinorOk`, `FFComps`.
+- **Changed**: `GC.Spec.Pages.Promote` (`tal.col` per address, G44),
+  `Promote.Loop`, `Promote.Collect`, `Promote.Idle`, `PromoteInst`;
+  `GC.Spec.Top.PagesDone2` (`cov_one`, `cov_all`); `Makefile`
+  (`FFComps` added to `ROOT_MODULES`); this document (§13).

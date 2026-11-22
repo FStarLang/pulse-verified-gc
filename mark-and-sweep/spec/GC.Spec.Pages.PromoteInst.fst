@@ -50,7 +50,7 @@ let mark_tal : tal pstate = {
   inv = PMP.mark_inv;
   alloc = mark_alloc;
   free = free_stw;
-  col = Black;
+  col = (fun _ -> Black);
 }
 
 #push-options "--z3rlimit 30"
@@ -99,7 +99,7 @@ let sw_tal (pm0: page_map) : tal pstate = {
   inv = sw_inv pm0;
   alloc = sw_alloc;
   free = MS.free_sw pm0;
-  col = White;
+  col = (fun _ -> White);
 }
 
 /// Page maps with the same unswept pages have the same blocks in use.

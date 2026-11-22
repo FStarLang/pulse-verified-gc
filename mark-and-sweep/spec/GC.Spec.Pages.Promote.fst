@@ -18,7 +18,9 @@
 ///     (`rewrite_roots`), the nursery reset.
 ///
 /// The allocator is a `tal s`: its state type `s`, the invariant it keeps,
-/// what counts as free, the colour of a new block, and the allocation.
+/// what counts as free, the colour of a new block at an address (the
+/// first-fit allocator colours by the side of the sweep's cursor), and the
+/// allocation.
 /// `contract` is what the collection needs of it (plan §27.2): from the
 /// invariant, an allocation either changes nothing, or returns a block that
 /// was not in use, of the size, tag and colour asked, brings no other block
@@ -55,7 +57,7 @@ noeq type tal (s: Type0) = {
   inv: heap -> s -> prop;
   alloc: heap -> s -> nat -> AT.tag_t -> GTot (heap & s & U64.t);
   free: free_def;
-  col: color;
+  col: U64.t -> color;
 }
 
 /// What one allocation of `wz > 0` words with tag `tag` guarantees.
@@ -69,7 +71,7 @@ let alloc_ok (#s: Type0) (a: tal s) (g: heap) (st: s) (wz: pos) (tag: AT.tag_t) 
       Seq.mem x (objects zero_addr g') /\
       U64.v (wosize_of_object x g') == wz /\
       tag_of_object x g' == tag /\
-      color_of_object x g' == a.col /\
+      color_of_object x g' == a.col o /\
       ~(in_use a.free g x) /\
       (forall (y: obj_addr). in_use a.free g' y == (in_use a.free g y || y = x)) /\
       (forall (g'': heap). AT.fields_written_away a.free g' g'' x ==> a.inv g'' st')) /\

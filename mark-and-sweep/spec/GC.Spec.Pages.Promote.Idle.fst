@@ -95,7 +95,7 @@ let idle_tal : tal pstate = {
   inv = PA.inv I.Idle;
   alloc = idle_alloc;
   free = free_stw;
-  col = White;
+  col = (fun _ -> White);
 }
 
 /// `Idle` and `Sweeping` allocate alike: white.

@@ -92,7 +92,7 @@ let copy_of (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (m: U64.t) 
    U64.v x + minor_wosize minor m * 8 <= heap_size /\
    U64.v (wosize_of_object x g) == minor_wosize minor m /\
    tag_of_object x g == promoted_tag minor m /\
-   color_of_object x g == a.col /\
+   color_of_object x g == a.col v /\
    (forall (j: nat). j < minor_wosize minor m ==> Sh.hdr g (U64.v x + j * 8) == minor_read_field minor m j))
 
 /// A forwarding entry: a copy; for an infix address, the same offset in its

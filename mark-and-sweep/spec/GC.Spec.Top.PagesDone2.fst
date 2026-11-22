@@ -133,6 +133,28 @@ let fwd_index (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: 
     Q.obj_young w.M.yng cw.T.cyng (Seq.index q j)
 #pop-options
 
+/// A young pointer in a scanned young field is covered.
+let cov_one (y: M.mheap) (ms: minor_state) (cs: P.gstate pstate) (j o i a: nat) (f: U64.t)
+  : Lemma (requires Y.yrepr y ms /\ PR.scanned ms cs (Seq.length cs.P.queue) /\ j < Seq.length cs.P.queue /\
+                    M.is_block y o /\ 8 * o + 8 < pow2 64 /\ Seq.index cs.P.queue j == PC.yobj o /\
+                    M.scannable (M.tag_of y o) /\ i < M.wz_of y o /\ M.field y o i == absv f /\
+                    absv f == M.VPtr (M.Young a))
+          (ensures PR.covered ms cs f)
+  = D.field_cov y ms cs j o i a;
+    absv_young f a;
+    Y.msz ();
+    U64.v_inj f (U64.uint_to_t (8 * a + 8))
+
+let cov_all (y: M.mheap) (ms: minor_state) (cs: P.gstate pstate) (j o i: nat) (f: U64.t)
+  : Lemma (requires Y.yrepr y ms /\ PR.scanned ms cs (Seq.length cs.P.queue) /\ j < Seq.length cs.P.queue /\
+                    M.is_block y o /\ 8 * o + 8 < pow2 64 /\ Seq.index cs.P.queue j == PC.yobj o /\
+                    M.scannable (M.tag_of y o) /\ i < M.wz_of y o /\ M.field y o i == absv f)
+          (ensures forall (a: nat). absv f == M.VPtr (M.Young a) /\ Some? (M.resolve y a) ==> PR.covered ms cs f)
+  = let one (a: nat)
+      : Lemma (requires absv f == M.VPtr (M.Young a)) (ensures PR.covered ms cs f)
+      = cov_one y ms cs j o i a f in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires one)
+
 /// **A field of a copy, after the update, is the young field forwarded.**
 #push-options "--z3rlimit 40"
 let copy_field (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M.world) (o c i: nat)
@@ -151,6 +173,8 @@ let copy_field (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w:
     tal_in_use ph st cw.T.cmaj g c;
     noscan_of g c;
     let f = word g (c + 1 + i) in
+    assert (M.field (cabs g) c i == absv f);
+    assert (M.field (cabs g) c i == M.field y o i);
     if M.scannable (M.tag_of y o) then begin
       fwd_index ph st cw w o c;
       let j = FStar.IndefiniteDescription.indefinite_description_ghost nat
@@ -158,16 +182,7 @@ let copy_field (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w:
                           Seq.index cs.P.queue j == PC.yobj o) in
       D.end_sok ph st cw w;
       PM.views cw w;
-      let cov (a: nat) : Lemma (absv f == M.VPtr (M.Young a) /\ Some? (M.resolve y a) ==> PR.covered ms cs f)
-        = if FStar.IndefiniteDescription.strong_excluded_middle (absv f == M.VPtr (M.Young a) /\ Some? (M.resolve y a))
-          then begin
-            assert (M.ptr_field y o i);
-            D.field_cov y ms cs j o i a;
-            absv_young f a;
-            Y.msz ();
-            U64.v_inj f (U64.uint_to_t (8 * a + 8))
-          end in
-      FStar.Classical.forall_intro cov;
+      cov_all y ms cs j o i f;
       RW.rw_ok ph st cw w f
     end
 #pop-options
