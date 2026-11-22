@@ -291,44 +291,47 @@ let slice_measure (h: mheap) (g: nat) (live: nat -> prop)
       assert (grey_live h live g /\ ~(grey_live h' live g))
     end
 
+/// A slice at any grey block keeps the invariant and decreases the measure.
 #push-options "--z3rlimit 40"
+let tmslice_with_m (h: mheap) (snap allocd: nat -> prop) (g: nat)
+  : Lemma (requires mark_slice_pre snap allocd h /\ is_block h g /\ col_of h g == Grey)
+          (ensures mark_slice_post snap allocd h (tmslice_with h g))
+  = let live = union snap allocd in
+    let h' = tmslice_with h g in
+    tmslice_colours_only h g;
+    assert (live g);
+    let c (x: nat) : Lemma ((is_block h' x /\ dark (col_of h' x) ==> snap x \/ allocd x) /\
+                            (allocd x ==> col_of h' x == Black) /\
+                            (col_of h' x == White ==> col_of h x == White))
+      = slice_colour h g x;
+        if Some? (h.hd x) && x <> g && col_of h x = White && edge_b h g x then begin
+          edge_b_iff h g x;
+          assert (exists (o' a: nat). resolve h a == Some o' /\ live o' /\ resolve h a == Some x)
+        end
+    in
+    FStar.Classical.forall_intro c;
+    let t3 (o: nat) : Lemma (snap o /\ col_of h' o == White ==> grey_reached h' o)
+      = if FStar.IndefiniteDescription.strong_excluded_middle (snap o /\ col_of h' o == White) then begin
+          let p = FStar.IndefiniteDescription.indefinite_description_ghost (wpath h o) (fun _ -> True) in
+          let q = slice_path h g o p in
+          assert (grey_reached h' o)
+        end
+    in
+    FStar.Classical.forall_intro t3;
+    assert (tricolour h' snap allocd);
+    slice_measure h g live
+#pop-options
+
 let tmslice_m (h: mheap) (snap allocd: nat -> prop)
   : Lemma (mark_slice_pre snap allocd h ==> mark_slice_post snap allocd h (tmslice h))
-  = let live = union snap allocd in
-    let pre () : Lemma (requires well_formed h /\ tricolour h snap allocd /\ closed h live /\ ~(mark_done h))
-                       (ensures (let h' = tmslice h in
-                                 colours_only h h' /\ tricolour h' snap allocd /\ mark_decreases h h' live))
+  = let pre () : Lemma (requires mark_slice_pre snap allocd h)
+                       (ensures mark_slice_post snap allocd h (tmslice h))
       = find_grey_spec h h.size;
         let Some g = find_grey h h.size in
-        let h' = tmslice_with h g in
-        assert (tmslice h == h');
-        tmslice_colours_only h g;
-        assert (live g);
-        let c (x: nat) : Lemma ((is_block h' x /\ dark (col_of h' x) ==> snap x \/ allocd x) /\
-                                (allocd x ==> col_of h' x == Black) /\
-                                (col_of h' x == White ==> col_of h x == White))
-          = slice_colour h g x;
-            if Some? (h.hd x) && x <> g && col_of h x = White && edge_b h g x then begin
-              edge_b_iff h g x;
-              assert (exists (o' a: nat). resolve h a == Some o' /\ live o' /\ resolve h a == Some x)
-            end
-        in
-        FStar.Classical.forall_intro c;
-        let t3 (o: nat) : Lemma (snap o /\ col_of h' o == White ==> grey_reached h' o)
-          = if FStar.IndefiniteDescription.strong_excluded_middle (snap o /\ col_of h' o == White) then begin
-              let p = FStar.IndefiniteDescription.indefinite_description_ghost (wpath h o) (fun _ -> True) in
-              let q = slice_path h g o p in
-              assert (grey_reached h' o)
-            end
-        in
-        FStar.Classical.forall_intro t3;
-        assert (tricolour h' snap allocd);
-        (* the measure *)
-        assert (live g);
-        slice_measure h g live
+        assert (tmslice h == tmslice_with h g);
+        tmslice_with_m h snap allocd g
     in
     FStar.Classical.move_requires pre ()
-#pop-options
 
 let tmslice_ok (h: mheap) (snap allocd: nat -> prop) : Lemma (mark_slice_at toy_rep tmark h snap allocd)
   = tmslice_m h snap allocd;

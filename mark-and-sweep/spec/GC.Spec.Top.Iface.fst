@@ -500,9 +500,31 @@ let oor_justified (#t #yt: Type0) (r: rep t yt) (#k: sweep_kind) (a: allocator t
     (forall (o: nat). L.memP o ys ==> is_block w.yng o /\ minor_live w o) /\
     alloc_fold r a ph cw.cmaj st w.yng ys == None
 
+/// The nursery's major pointers are values the program may store (G36: a
+/// copy is a Fill of the allocator, whose invariant reads pointer fields),
+/// each to the start of a block (G39: the promotion's
+/// `minor_major_fields_not_free` takes the pointer itself to be a block in
+/// use, so no interior pointer into a major closure).
+let young_sound (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state)
+    (h: t) (w: world) : prop =
+  forall (y i b: nat). ptr_field w.yng y i /\ field w.yng y i == VPtr (Major b) ==>
+    sound_value a ph st h w.maj (VPtr (Major b)) /\ is_block w.maj b
+
+/// A word of a young field that reads as an infix header is one: in a
+/// closure, at its own offset, past the code pointer and before the end
+/// (G38: the promotion's `minor_infix_wf`, akhil's trust assumption on the
+/// nursery, as a model condition; ordinary data can break it, e.g. a field
+/// holding the word 249).
+let young_infix_ok (y: mheap) : prop =
+  forall (o i: nat). is_block y o /\ i < wz_of y o ==>
+    (match infix_hdr (field y o i) with
+     | Some k -> tag_of y o == closure_tag /\ k == i + 1 /\ k >= 2 /\ k < wz_of y o
+     | None -> True)
+
 let minor_pre (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state)
     (h: t) (w: world) : prop =
-  a.inv ph h st /\ well_formed w.maj /\ young_ok w.yng /\ rem_covers a st h w
+  a.inv ph h st /\ well_formed w.maj /\ young_ok w.yng /\ rem_covers a st h w /\ young_sound a ph st h w /\
+  young_infix_ok w.yng
 
 let minor_post_done (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state)
     (hc: t) (w: world) (hc': t) (st': a.state) (roots': list value) (fwd: nat -> option nat) (h': mheap)
@@ -519,9 +541,11 @@ let minor_post_done (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k
      h'.hd c == Some ({ wz = wz_of y o; tag = tag_of y o; col = colour_at k ph c }) /\
      (forall (i: nat). i < wz_of y o ==> field h' c i == fwd_field y o i y fwd)) /\
   (forall (x: nat). in_use a st' hc' h' x <==> (in_use a st hc h x \/ (exists (o: nat). fwd o == Some x))) /\
-  (* other in-use objects unchanged except young pointers rewritten *)
+  (* other in-use objects keep their header; those the program may use have
+     their young pointers rewritten (G37: the sweep frees the others) *)
   (forall (x: nat). in_use a st hc h x ==>
-     h'.hd x == h.hd x /\ (forall (i: nat). i < wz_of h x ==> field h' x i == fwd_field h x i y fwd)) /\
+     h'.hd x == h.hd x /\
+     (live_target a ph st hc h x ==> (forall (i: nat). i < wz_of h x ==> field h' x i == fwd_field h x i y fwd))) /\
   roots' == L.map (fwdv y fwd) w.roots /\
   a.inv ph hc' st' /\ well_formed h'
 

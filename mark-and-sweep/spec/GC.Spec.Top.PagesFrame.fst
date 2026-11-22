@@ -26,6 +26,7 @@ open GC.Spec.Top.Word
 open GC.Spec.Top.Abs
 open GC.Spec.Top.Low
 open GC.Spec.Top.ByteFacts
+open GC.Spec.Top.ByteWrite
 open GC.Spec.Top.PagesAlloc
 open GC.Spec.Top.PagesAllocOk
 open GC.Spec.Top.PagesInst
@@ -182,26 +183,6 @@ let splice_abs (g0 g1: heap) (k j: nat)
 /// ---------------------------------------------------------------------------
 /// What the frame lets differ
 /// ---------------------------------------------------------------------------
-
-/// Recolouring a header word.
-#push-options "--z3rlimit 40"
-let colorHeader_abs (v: U64.t) (c: color)
-  : Lemma (abs_hdr (colorHeader v c) ==
-           ({ M.wz = (abs_hdr v).M.wz; M.tag = (abs_hdr v).M.tag; M.col = abs_col c }))
-  = colorHeader_preserves_wosize v c;
-    colorHeader_getColor v c;
-    colorHeader_spec v c;
-    let w = U64.v v in
-    let pc = pack_color c in
-    assert (pc < 4);
-    setColor_preserves_tag w pc;
-    tag_low_byte v;
-    tag_low_byte (colorHeader v c);
-    mask_tag_value ();
-    FStar.UInt.logand_mask #64 w 8;
-    FStar.UInt.logand_mask #64 (set_color w pc) 8;
-    assert_norm (pow2 8 == 256)
-#pop-options
 
 /// The frame on the page heaps `g0` (before) and `g1` (after).
 let fset (ph: T.phase pprog) (s: pst) (h: heap) (m m': M.mheap) (g0 g1: heap) : prop =

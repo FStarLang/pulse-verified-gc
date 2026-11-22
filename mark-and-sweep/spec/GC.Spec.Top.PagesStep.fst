@@ -34,6 +34,7 @@ open GC.Spec.Top.Word
 open GC.Spec.Top.Abs
 open GC.Spec.Top.Low
 open GC.Spec.Top.ByteFacts
+open GC.Spec.Top.ByteWrite
 open GC.Spec.Top.ByteRep
 open GC.Spec.Top.PagesAlloc
 open GC.Spec.Top.PagesAllocOk

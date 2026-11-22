@@ -529,8 +529,20 @@ let rem_cov () : Lemma (rem_covers toy (st_at 2) w_rem.maj w_rem)
       = if in_use toy (st_at 2) w_rem.maj w_rem.maj o && ptr_field w_rem.maj o i then assert (o == 0 /\ i == 0) in
     FStar.Classical.forall_intro_3 c
 
+let rem_yinfix () : Lemma (young_infix_ok w_rem.yng)
+  = let one (o i: nat) : Lemma (is_block w_rem.yng o /\ i < wz_of w_rem.yng o ==>
+                                infix_hdr (field w_rem.yng o i) == None)
+      = () in
+    FStar.Classical.forall_intro_2 one
+
+let rem_ysound () : Lemma (young_sound toy Idle (st_at 2) w_rem.maj w_rem)
+  = let one (y i b: nat) : Lemma (~(ptr_field w_rem.yng y i /\ field w_rem.yng y i == VPtr (Major b))) = () in
+    FStar.Classical.forall_intro_3 one
+
 let norem_facts () : Lemma (minor_pre toy Idle (st_at 2) w_rem.maj w_rem /\ minor_live w_rem 0 /\ is_block w_rem.yng 0)
   = FStar.Classical.forall_intro rem_local;
+    rem_yinfix ();
+    rem_ysound ();
     assert_norm (is_block w_rem.maj 2 /\ wz_of w_rem.maj 2 == 3 /\ w_rem.maj.size == 6);
     assert (tail_ok w_rem.maj 2);
     heap2_wf 1 White 3 White (fun (x: nat) -> if x = 1 then VPtr (Young 0) else VInt 0);

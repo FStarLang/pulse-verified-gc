@@ -1705,3 +1705,168 @@ of its steps. What is missing:
 One seed-1 timeout (`PagesAllocOk.fill_written`) and one seed-2 timeout
 (`PagesFreed.reindex`) were found by these runs and fixed by splitting the
 steps; the table gives the times after the fix.
+
+## 11. Stage 2b, part 3: the real components on the byte heap
+
+The user's decisions (2026-11-22): the mark is akhil's incremental mark (the
+one the pages-only cycle runs, `GC.Spec.Pages.Cycle.Mark`); the minor
+collection is the generic promotion `GC.Spec.Pages.Promote` with its idle,
+marking and sweeping instances; the barrier is akhil's write barrier.  None
+depends on the allocator except the minor collection, which takes the
+allocator's instance of the promotion.
+
+### 11.1 The components
+
+- **Barrier** (`GC.Spec.Top.ByteBarrier`, `byte_barrier_ok`): `bwrite` is
+  `caml_modify` (akhil's `GB.modify_heap`): while marking the old value's
+  target is darkened, then the word is written; the slot is remembered when
+  the block is scannable and the value young.  `binit` writes the fields in
+  order (`caml_initialize`).  `bwrite_marking_real`: wherever akhil's barrier
+  runs (a body word of a scannable block in use, in a well-formed heap),
+  `bwrite` is `GB.modify_heap`.  The proof reads the byte result as the toy
+  barrier's model result (`GC.Spec.Top.ByteWrite`: a field write is
+  `set_field`, a recolouring is `set_col`).
+- **Mark** (`GC.Spec.Top.ByteMark`, `byte_mark_ok`): the start is akhil's
+  root darkening (`MStart.darkened`) of the major pointers the model
+  resolves, in the roots and in the nursery's fields; a slice takes the
+  lowest grey block and makes akhil's moves on it (`S.scan_field` for each
+  field, then `makeBlack`).  `bslice_moves`: under the slice's
+  precondition, a slice is `S.mark_steps` from no partly scanned object back
+  to none.  The proofs read the byte results as the toy mark's
+  (`ToyMark.tmslice_with`, now stated for any grey block, and `tmstart`).
+- **Minor collection** (`GC.Spec.Top.PagesMinor`, `PagesMinorOk.pages_minor_ok`):
+  `Promote.promote` with the page allocator's instance for the phase
+  (`PagesReplay.ptal`: `idle_tal`, `mark_tal`, `sw_tal`), on the page heap
+  `gl h st`, forwarding the young pointers the model resolves among the
+  roots and the remembered slots (`PagesLive.roots_of`).  It reports
+  `OutOfRoom` exactly when the promotion refused a live object
+  (`PromoteRun.wit`); otherwise it returns akhil's pointer update of the
+  promoted heap (`Promote.collect`), the page state, the roots forwarded,
+  and the forwarding map read on the model: the lookup in the list of
+  promotions (young block, copy) the queue records (the contract asks for a
+  total map; one computed from the promotion's ghost map would be ghost).
+  - `PromoteRun` (any allocator of `Promote.contract`): along the loop the
+    queue lists each forwarded object once, the heap and state are the
+    replay of the queue's promotions, every queued object is live, and either
+    some live object was refused after the first `k` promotions (`wit`) or
+    every root and every field scanned is covered (`promote_done`).
+  - `YoungInfix`: akhil's `minor_infix_wf` and `minor_wf` follow from the
+    nursery's representation and the model conditions of G38.
+  - `PromoteCopy`: `copy_fields` is the model's Fill of the copy with the
+    young block's fields.
+  - `Canon`: two byte heaps with the same tiled reading and the same low
+    bytes are equal, so the page allocator does the same on every byte heap
+    representing a model heap (what the contract's `alloc_fold` needs).
+  - `PagesReplay`, `PagesQueue`: each promotion is an allocation of the page
+    allocator component (`palloc`) and a Fill; `ri_step`, `ri_queue` carry,
+    by the allocator contract at each allocation, the page invariant, the
+    blocks in use (the old ones and the copies), the old blocks kept, each
+    copy's header, colour, fields and free words, and the soundness of the
+    nursery's major pointers.
+  - `PagesOor`: a refused promotion after `k` queued ones makes the
+    contract's `alloc_fold` over those young blocks and the refused one end
+    in `None`: each byte heap `alloc_fold` picks has the replay's page heap
+    (`Canon.same_gl`).  `PagesMinor.oor_ok` justifies `OutOfRoom`.
+  - `PagesLive`: the roots are justified and liveness is closed under the
+    fields the scan reads; `YoungInfix.young_resolve_back`: an address the
+    bytes resolve to an object is one the model resolves.
+  - `PromoteUpdate`, `PagesRw`: akhil's pointer update keeps blocks and
+    headers and rewrites a field word exactly in a scannable block in use;
+    the rewrite is the model's `fwdv` of the value when its young pointer
+    was covered (`rw_ok`).
+  - `PagesDone`, `PagesDone2`, `PagesMinorOk`: the `Done` post, clause by
+    clause: the forwarding map is exactly the live young blocks, each once
+    (completeness by induction on the model's tracing, from the closure of
+    the promotion); the copies' headers, colours, free words and forwarded
+    fields; the blocks in use; the old blocks' headers and, for those the
+    program may use, forwarded fields (their young pointers are remembered
+    slots, so roots); the roots; the page invariant after the update
+    (`collect_inv`, read back from the instance); a well-formed reading.
+- **The collector** (`GC.Spec.Top.PagesComps`): the record `pc` and
+  `pages_components_ok : components_ok pc`, when there is a page
+  (`n_pages > 0`, G34).
+
+### 11.2 Gaps
+
+- **G35 (barrier, darkening).** The contract's `darkened` is exact: only the
+  model's `old_target` may turn grey.  akhil's `MM.darken` darkens through
+  any word that looks like an infix header, which the model need not
+  resolve (an int field with tag 249, a pointer into the middle of a block).
+  The byte barrier darkens the block the model resolves the old value to;
+  on akhil's heaps (his `modify_ok`) that is `MM.darken`'s target
+  (`bwrite_marking_real`).
+- **G36 (minor, young pointers into the major heap).** A promoted copy is a
+  Fill of the allocator, whose invariant reads pointer fields (pages:
+  `no_pointer_to_blue`).  `minor_pre` said nothing of the nursery's major
+  pointers; it now requires them to be values the program may store
+  (`young_sound`).  The promotion's own precondition is the same
+  (`GenInv.minor_major_fields_not_free`).
+- **G37 (minor, dead blocks).** `minor_post_done` asked every block in use
+  to have its young pointers rewritten.  Mid-sweep the promotion (rightly)
+  leaves the white blocks of unswept pages alone, which the sweep will free.
+  The clause now asks it of the blocks the program may use
+  (`live_target`); the other blocks in use keep their header.
+- **G38 (minor, akhil's trust assumption on the nursery).** The promotion
+  (like akhil's Cheney collection, and his pointer update, which it calls)
+  assumes `minor_infix_wf`: every nursery word whose tag is the infix tag
+  is the infix header of a closure.  Ordinary data breaks it: a field
+  holding the OCaml int 124 is the word 249, which makes the next address
+  look infix with offset 0; bytes past the bump pointer are not read by the
+  model at all.  Two changes make it hold: (a) the nursery's representation
+  records that the words past the bump pointer are zero (`Young.yok`; reset
+  zeroes the nursery, allocation and writes stay below the bump pointer);
+  (b) `minor_pre` requires that a young field reading as an infix header is
+  one (`young_infix_ok`: in a closure, at its own offset, `2 <= k < wz`).
+  (b) is akhil's assumption stated in the model; OCaml programs violate it,
+  so the minor collection is proved only for nurseries without such words.
+  Removing it needs a promotion and a pointer update that resolve only the
+  addresses they follow, a rework of akhil's update lemmas.  **For the
+  user's decision.**
+- **G39 (minor, young pointers into major closures).** The promotion's
+  precondition (akhil's `minor_major_fields_not_free`) takes each major
+  pointer in a young field to be a block in use itself, not an interior
+  pointer into a closure.  The model lets a young object point into a major
+  closure (OCaml's mutually recursive closures do).  `young_sound` now also
+  requires such pointers to be block starts.  Like G38(b), this is a
+  restriction of the promotion, stated in the model.  **For the user's
+  decision.**
+
+### 11.3 Not done
+
+- **The pages run** (both styles) is not built.  `pc` has every contract,
+  so the run's hypotheses follow; what a run needs is the configurations
+  themselves: with `heap_size` and the page parameters abstract, every
+  allocation's address, every mark slice's grey block and every sweep
+  step's unit is a symbolic computation through the page modules, about
+  twenty events per style.
+- **First-fit (2c)** is not started: its allocator and sweep as an instance
+  over `byte_rep`, the minor collection with akhil's free-list allocator as
+  a promotion allocator (`Promote.tal`, its `contract`), the same mark and
+  barrier.
+- The decisions G38(b) and G39 (assumptions of the promotion, now
+  preconditions of the minor contract) are the user's.
+
+### 11.4 Checking
+
+Every `GC.Spec.Top` module (47, in dependency order), each from a fresh
+cache, without `--retry`, rlimits at most 40, no admits or assumes:
+
+| Z3 seed | errors | warnings | total time | slowest module |
+|---|---|---|---|---|
+| 0 | 0 | 0 | 1313 s | `ByteMark`, 165 s |
+| 1 | 0 | 0 | 1363 s | `ByteMark`, 142 s |
+| 2 | 0 | 0 | 1374 s | `ByteMark`, 154 s |
+
+### 11.5 Files
+
+- **New** (`mark-and-sweep/spec/`): `GC.Spec.Top.ByteWrite`, `ByteBarrier`,
+  `ByteMark`, `PromoteRun`, `YoungInfix`, `PromoteCopy`, `Canon`,
+  `PagesReplay`, `PagesQueue`, `PagesOor`, `PagesLive`, `PagesMinor`,
+  `PromoteUpdate`, `PagesFwd`, `PagesDone`, `PagesRw`, `PagesDone2`,
+  `PagesMinorOk`, `PagesComps`.
+- **Changed**: `Iface` (G36, G37, G38b, G39), `Young` (G38a), `ToyMark`
+  (`tmslice_with_m`), `Broken` (the new preconditions on its witness),
+  `PagesFrame` (`colorHeader_abs` moved to `ByteWrite`), `PagesSweep`
+  (`resolve_cabs`, `field_to`, `field_model`, `target_model` moved to
+  `ByteWrite`), `PagesStep` (opens `ByteWrite`), `Makefile`
+  (`PagesComps` added to `ROOT_MODULES`).

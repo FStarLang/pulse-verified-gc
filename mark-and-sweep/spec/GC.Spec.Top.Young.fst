@@ -239,19 +239,37 @@ let ybody (ms: minor_state) (j: nat) : M.value = absv (ymw ms j)
 
 let yabs (ms: minor_state) : M.mheap = { M.size = ywords; M.hd = yhd_of ms; M.body = ybody ms }
 
+/// The words at and past `b` are zero (G38: the nursery is cleared when
+/// reset, and allocation and writes stay below the bump pointer).
+[@@"opaque_to_smt"]
+let zero_past (d: minor_heap) (b: nat) : prop = forall (q: nat). ok_pos q /\ b <= q ==> yw d q == 0UL
+
+let zero_past_def (d: minor_heap) (b: nat)
+  : Lemma (zero_past d b <==> (forall (q: nat). ok_pos q /\ b <= q ==> yw d q == 0UL))
+  = reveal_opaque (`%zero_past) (zero_past d b)
+
 [@@"opaque_to_smt"]
 let yok (ms: minor_state) : prop =
-  U64.v ms.bump % 8 == 0 /\ U64.v ms.bump <= minor_heap_size /\ ychain ms.data 0 (U64.v ms.bump)
+  U64.v ms.bump % 8 == 0 /\ U64.v ms.bump <= minor_heap_size /\ ychain ms.data 0 (U64.v ms.bump) /\
+  zero_past ms.data (U64.v ms.bump)
 
 let yok_elim (ms: minor_state)
   : Lemma (requires yok ms)
-          (ensures U64.v ms.bump % 8 == 0 /\ U64.v ms.bump <= minor_heap_size /\ ychain ms.data 0 (U64.v ms.bump))
+          (ensures U64.v ms.bump % 8 == 0 /\ U64.v ms.bump <= minor_heap_size /\ ychain ms.data 0 (U64.v ms.bump) /\
+                   zero_past ms.data (U64.v ms.bump))
   = reveal_opaque (`%yok) (yok ms)
 
 let yok_intro (ms: minor_state)
-  : Lemma (requires U64.v ms.bump % 8 == 0 /\ U64.v ms.bump <= minor_heap_size /\ ychain ms.data 0 (U64.v ms.bump))
+  : Lemma (requires U64.v ms.bump % 8 == 0 /\ U64.v ms.bump <= minor_heap_size /\ ychain ms.data 0 (U64.v ms.bump) /\
+                    zero_past ms.data (U64.v ms.bump))
           (ensures yok ms)
   = reveal_opaque (`%yok) (yok ms)
+
+/// A nursery of zero bytes.
+let zero_data (q: nat)
+  : Lemma (yw (Seq.create minor_heap_size 0uy) q == 0UL)
+  = reveal_opaque (`%yw) yw;
+    if ok_pos q then begin msz (); minor_read_word_zero_heap (U64.uint_to_t q) end
 
 /// The canonical reading: the words outside fields read as 0.
 let rec yfw_below (ms: minor_state) (w n: nat) : bool =
@@ -373,8 +391,11 @@ let yrepr_reads (m: M.mheap) (ms: minor_state)
 /// ---------------------------------------------------------------------------
 
 let empty_agree (ms: minor_state) (n: nat)
-  : Lemma (requires U64.v ms.bump == 0 /\ n == ywords) (ensures yrepr (M.empty_heap n) ms)
+  : Lemma (requires U64.v ms.bump == 0 /\ n == ywords /\ ms.data == Seq.create minor_heap_size 0uy)
+          (ensures yrepr (M.empty_heap n) ms)
   = chain_refl ms.data 0;
+    FStar.Classical.forall_intro zero_data;
+    zero_past_def ms.data 0;
     yok_intro ms;
     FStar.Classical.forall_intro (yat_empty ms.data 0);
     let nb (x: nat) : Lemma (~(M.is_block (yabs ms) x)) = yat_empty ms.data 0 (8 * x) in
@@ -410,6 +431,23 @@ let field_pos (o i wz: nat)
 
 let mul8_inj (a b: nat) : Lemma (requires a <> b) (ensures 8 * a <> 8 * b) = ()
 
+let fld_bump (d: minor_heap) (b o wz i: nat)
+  : Lemma (requires i < wz /\ 8 * o + 8 * (wz + 1) <= b) (ensures 8 * (o + 1 + i) + 8 <= b) = ()
+
+let write_zero_past (d: minor_heap) (p: nat) (v: U64.t) (b: nat)
+  : Lemma (requires zero_past d b /\ ok_pos p /\ p + 8 <= b) (ensures zero_past (mwrite d p v) b)
+  = zero_past_def d b;
+    zero_past_def (mwrite d p v) b;
+    let zp (q: nat) : Lemma (ok_pos q /\ b <= q ==> yw (mwrite d p v) q == yw d q)
+      = if ok_pos q && b <= q then mrw_other d p q v in
+    FStar.Classical.forall_intro zp
+
+let frame_zero_past (d d2: minor_heap) (b b': nat)
+  : Lemma (requires zero_past d b /\ b <= b' /\ (forall (q: nat). ok_pos q /\ b' <= q ==> yw d2 q == yw d q))
+          (ensures zero_past d2 b')
+  = zero_past_def d b;
+    zero_past_def d2 b'
+
 /// The write, on the nursery's own reading: a store into the field.
 #push-options "--z3rlimit 40"
 let ywrite_abs (ms: minor_state) (o i: nat) (v: M.value)
@@ -431,6 +469,8 @@ let ywrite_abs (ms: minor_state) (o i: nat) (v: M.value)
         end in
     FStar.Classical.forall_intro fr;
     chain_frame d d' 0 b;
+    fld_bump d b o (M.wz_of (yabs ms) o) i;
+    write_zero_past d p (concv v) b;
     yok_intro ms';
     mrw_same d p (concv v);
     absv_concv v;
@@ -614,6 +654,7 @@ let yalloc_abs (ms: minor_state) (sz: M.size_t) (tag: M.tag_t) (vs: list M.value
     chain_frame d d2 0 b;
     assert (wz_at d2 b == sz /\ next d2 b == b');
     chain_snoc d2 0 b;
+    frame_zero_past d d2 b b';
     yok_intro ms';
     let ya = M.young_alloc (yabs ms) o sz tag vs in
     let hd (j: nat) : Lemma (ya.M.hd j == yhd_of ms' j)
