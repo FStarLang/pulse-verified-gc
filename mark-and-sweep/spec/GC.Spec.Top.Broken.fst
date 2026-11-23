@@ -523,8 +523,8 @@ let rem_local (o: nat) : Lemma (tlocal Idle w_rem.maj (st_at 2) o) = ()
 
 let rem_young_ok () : Lemma (young_ok w_rem.yng) = ()
 
-let rem_cov () : Lemma (rem_covers toy (st_at 2) w_rem.maj w_rem)
-  = let c (o i b: nat) : Lemma (in_use toy (st_at 2) w_rem.maj w_rem.maj o /\ ptr_field w_rem.maj o i /\
+let rem_cov () : Lemma (rem_covers toy Idle (st_at 2) w_rem.maj w_rem)
+  = let c (o i b: nat) : Lemma (live_target toy Idle (st_at 2) w_rem.maj w_rem.maj o /\ ptr_field w_rem.maj o i /\
                                 field w_rem.maj o i == VPtr (Young b) ==> L.memP (o, i) w_rem.rem)
       = if in_use toy (st_at 2) w_rem.maj w_rem.maj o && ptr_field w_rem.maj o i then assert (o == 0 /\ i == 0) in
     FStar.Classical.forall_intro_3 c

@@ -197,8 +197,8 @@ let mutator_ok_w (c: comps) (w: world) (e: event) : prop =
   | EWrite (Young o) i v ->
     is_block w.yng o /\ yreachable w o /\ i < wz_of w.yng o /\ tag_of w.yng o <> closure_tag /\
     (scannable (tag_of w.yng o) ==> value_ok w v) /\ c.r.storable v
-  | ERead (Major o) i -> is_block w.maj o /\ reachable w o /\ i < wz_of w.maj o
-  | ERead (Young o) i -> is_block w.yng o /\ yreachable w o /\ i < wz_of w.yng o
+  | ERead (Major o) i -> ptr_field w.maj o i /\ reachable w o
+  | ERead (Young o) i -> ptr_field w.yng o i /\ yreachable w o
   | ERoots rs -> (forall (v: value). L.memP v rs ==> value_ok w v) /\ storable_all c.r rs
   | _ -> True
 
@@ -244,9 +244,11 @@ let hyps_at (c: comps) (x: config c) (e: event) : prop =
   (match e with
    | EAlloc sz tag vs ->
      alloc_at r c.a x.ph h x.ast sz tag /\
-     (let (h', _, res) = c.a.alloc x.ph h x.ast sz tag in
+     (let (h', st', res) = c.a.alloc x.ph h x.ast sz tag in
       match res with
-      | Ok o -> barrier_init_at r c.b h' x.w.crem o vs
+      | Ok o -> barrier_init_at r c.b h' x.w.crem o vs /\
+               (* G48: allocation status after the Fill, at the new state *)
+               (forall (h2: c.t). free_hd_at r c.a st' h' h2)
       | NoRoom -> True)
    | EYoungAlloc sz tag vs -> yalloc_ok r x.w.cyng sz tag vs
    | EWrite (Major o) i v ->
@@ -479,9 +481,10 @@ let hyps_of_ok (c: comps) (x: config c) (e: event)
     assert (forall (h': c.t). free_hd_at r c.a x.ast x.w.cmaj h');
     match e with
     | EAlloc sz tag vs ->
-      let (h', _, res) = c.a.alloc x.ph x.w.cmaj x.ast sz tag in
+      let (h', st', res) = c.a.alloc x.ph x.w.cmaj x.ast sz tag in
       (match res with
-       | Ok o -> assert (barrier_init_at r c.b h' x.w.crem o vs)
+       | Ok o -> assert (barrier_init_at r c.b h' x.w.crem o vs);
+                assert (forall (h2: c.t). free_hd_at r c.a st' h' h2)
        | NoRoom -> ());
       assert (alloc_at r c.a x.ph x.w.cmaj x.ast sz tag)
     | EYoungAlloc sz tag vs -> assert (yalloc_ok r x.w.cyng sz tag vs)

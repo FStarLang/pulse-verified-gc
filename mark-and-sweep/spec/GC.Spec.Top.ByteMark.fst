@@ -500,10 +500,16 @@ let yfield_unfold (h y: M.mheap) (o n: nat)
 
 let rec yfield_intro (g: heap) (y: M.mheap) (o n j x: nat)
   : Lemma (requires j < n /\ yhit g y o j x) (ensures hits g (yfield_ws (cabs g) y o n) x) (decreases n)
-  = yfield_unfold (cabs g) y o n;
-    append_hit g (yhead (cabs g) y o (n - 1)) (yfield_ws (cabs g) y o (n - 1)) x;
-    if j = n - 1 then yhead_hit g y o j x
-    else yfield_intro g y o (n - 1) j x
+  = if j = n - 1 then begin
+      yfield_unfold (cabs g) y o n;
+      append_hit g (yhead (cabs g) y o (n - 1)) (yfield_ws (cabs g) y o (n - 1)) x;
+      yhead_hit g y o j x
+    end
+    else begin
+      yfield_intro g y o (n - 1) j x;
+      yfield_unfold (cabs g) y o n;
+      append_hit g (yhead (cabs g) y o (n - 1)) (yfield_ws (cabs g) y o (n - 1)) x
+    end
 
 let rec yfield_elim (g: heap) (y: M.mheap) (o n x: nat)
   : Lemma (requires hits g (yfield_ws (cabs g) y o n) x) (ensures exists (j: nat). j < n /\ yhit g y o j x)

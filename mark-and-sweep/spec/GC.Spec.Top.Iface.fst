@@ -394,6 +394,11 @@ let mark_no_increase (h h': mheap) (live: nat -> prop) : prop =
   ((exists (o: nat). white_live h live o /\ ~(white_live h' live o)) \/
    (forall (o: nat). grey_live h' live o ==> grey_live h live o))
 
+/// The mark only darkens: a block whose colour changes becomes grey or
+/// black (G50, design doc §16.2).
+let darken_only (h h': mheap) : prop =
+  forall (o: nat). col_of h' o =!= col_of h o ==> dark (col_of h' o)
+
 let no_dark (h: mheap) : prop = forall (o: nat). is_block h o ==> not (dark (col_of h o))
 
 let mark_start_pre (w: world) : prop =
@@ -402,7 +407,7 @@ let mark_start_pre (w: world) : prop =
 
 /// mark_start greys every object in outside_refs(s).
 let mark_start_post (w: world) (m': mheap) : prop =
-  colours_only w.maj m' /\
+  colours_only w.maj m' /\ darken_only w.maj m' /\
   (forall (o: nat). outside_ref w o ==> dark (col_of m' o)) /\
   tricolour m' (reachable w) (fun _ -> False)
 
@@ -420,7 +425,7 @@ let mark_slice_pre (snap allocd: nat -> prop) (m: mheap) : prop =
 /// A slice (when something is grey) changes colours only, keeps the
 /// invariant and decreases the measure.
 let mark_slice_post (snap allocd: nat -> prop) (m m': mheap) : prop =
-  colours_only m m' /\ tricolour m' snap allocd /\ mark_decreases m m' (union snap allocd)
+  colours_only m m' /\ darken_only m m' /\ tricolour m' snap allocd /\ mark_decreases m m' (union snap allocd)
 
 let mark_slice_at (#t #yt: Type0) (r: rep t yt) (mk: mark t yt) (h: t) (snap allocd: nat -> prop) : prop =
   lifted r (mark_slice_pre snap allocd) h (mk.mslice h) (mark_slice_post snap allocd)
@@ -454,9 +459,12 @@ let fwdv (y: mheap) (fwd: nat -> option nat) (v: value) : value =
 let fwd_field (src: mheap) (o i: nat) (y: mheap) (fwd: nat -> option nat) : value =
   if scannable (tag_of src o) then fwdv y fwd (field src o i) else field src o i
 
-/// Every old-to-young pointer in a block in use is a remembered slot.
-let rem_covers (#t: Type0) (#k: sweep_kind) (a: allocator t k) (st: a.state) (h: t) (w: world) : prop =
-  forall (o i b: nat). in_use a st h w.maj o /\ ptr_field w.maj o i /\ field w.maj o i == VPtr (Young b) ==>
+/// Every old-to-young pointer in a block the program may use is a
+/// remembered slot (G46, design doc §16.2: a block the sweep has yet to free
+/// is not rewritten by a minor collection, so its slots are not kept).
+let rem_covers (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state) (h: t)
+    (w: world) : prop =
+  forall (o i b: nat). live_target a ph st h w.maj o /\ ptr_field w.maj o i /\ field w.maj o i == VPtr (Young b) ==>
     L.memP (o, i) w.rem
 
 /// A heap that `m` represents, if there is one.
@@ -523,7 +531,7 @@ let young_follow_ok (y: mheap) : prop =
 
 let minor_pre (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state)
     (h: t) (w: world) : prop =
-  a.inv ph h st /\ well_formed w.maj /\ young_ok w.yng /\ rem_covers a st h w /\ young_sound a ph st h w /\
+  a.inv ph h st /\ well_formed w.maj /\ young_ok w.yng /\ rem_covers a ph st h w /\ young_sound a ph st h w /\
   young_follow_ok w.yng
 
 let minor_post_done (#t: Type0) (#k: sweep_kind) (a: allocator t k) (ph: phase k.progress) (st: a.state)
@@ -594,7 +602,8 @@ let write_pre (o i: nat) (v: value) (sv: bool) (h: mheap) : prop =
 let write_post (marking: bool) (rem rem': list slot) (o i: nat) (v: value) (h h': mheap) : prop =
   h'.size == h.size /\
   (forall (x: nat). is_block h' x == is_block h x /\ wz_of h' x == wz_of h x /\ tag_of h' x == tag_of h x) /\
-  (forall (w: nat). field_word h w ==> h'.body w == (if w = o + 1 + i then v else h.body w)) /\
+  (* every other word unchanged (G49, design doc §16.2) *)
+  (forall (w: nat). h'.body w == (if w = o + 1 + i then v else h.body w)) /\
   (* while marking the overwritten value is darkened; otherwise no colour changes *)
   darkened h h' (if marking then old_target h o i else None) /\
   (* every old-to-young pointer written is remembered *)

@@ -287,7 +287,8 @@ let roots_step_ok (sty: style) (x: config tc) (rs: list value)
 /// A read of a field of a major block through a root.
 let read_major_ok (sty: style) (x: config tc) (o i: nat)
   : Lemma (requires x.stopped == false /\ (Sequential? sty ==> Idle? x.ph) /\
-                    is_block (wo x).maj o /\ root_b (wo x).maj (wo x).roots o == true /\ i < wz_of (wo x).maj o)
+                    is_block (wo x).maj o /\ root_b (wo x).maj (wo x).roots o == true /\ i < wz_of (wo x).maj o /\
+                    scannable (tag_of (wo x).maj o))
           (ensures (let e = ERead (Major o) i in enabled tc x e /\ style_ok sty x e /\ mutator_ok x e))
   = reach_by_root (wo x) o; mutator_of x (ERead (Major o) i)
 
@@ -387,7 +388,8 @@ let seq_step_15 () : Lemma (step_ok es_seq Sequential 15)
   = len_seq ();
     assert_nbe (ev es_seq 15 == ERead (Major 0) 0);
     assert_nbe ((cs 15).stopped == false /\ Idle? (cs 15).ph /\ is_block (wo (cs 15)).maj 0 /\
-                 root_b (wo (cs 15)).maj (wo (cs 15)).roots 0 == true /\ 0 < wz_of (wo (cs 15)).maj 0);
+                 root_b (wo (cs 15)).maj (wo (cs 15)).roots 0 == true /\ 0 < wz_of (wo (cs 15)).maj 0 /\
+                 scannable (tag_of (wo (cs 15)).maj 0));
     read_major_ok Sequential (cs 15) 0 0
 
 #pop-options
@@ -559,7 +561,8 @@ let inc_step_21 () : Lemma (step_ok es_inc Incremental 21)
   = len_inc ();
     assert_nbe (ev es_inc 21 == ERead (Major 0) 0);
     assert_nbe ((ci 21).stopped == false /\ is_block (wo (ci 21)).maj 0 /\
-                 root_b (wo (ci 21)).maj (wo (ci 21)).roots 0 == true /\ 0 < wz_of (wo (ci 21)).maj 0);
+                 root_b (wo (ci 21)).maj (wo (ci 21)).roots 0 == true /\ 0 < wz_of (wo (ci 21)).maj 0 /\
+                 scannable (tag_of (wo (ci 21)).maj 0));
     read_major_ok Incremental (ci 21) 0 0
 
 let inc_step_22 () : Lemma (step_ok es_inc Incremental 22)

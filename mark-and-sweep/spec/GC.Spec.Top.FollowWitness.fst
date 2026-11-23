@@ -83,9 +83,9 @@ let inv_ok (_: unit) : Lemma (tinv Idle maj_a st4)
     FStar.Classical.forall_intro maj_blocks;
     tinv_intro Idle maj_a st4
 
-let rem_ok (_: unit) : Lemma (rem_covers toy st4 maj_a w_acc)
+let rem_ok (_: unit) : Lemma (rem_covers toy Idle st4 maj_a w_acc)
   = let c (o i b: nat)
-      : Lemma (~(in_use toy st4 maj_a w_acc.maj o /\ ptr_field w_acc.maj o i /\ field w_acc.maj o i == VPtr (Young b)))
+      : Lemma (~(live_target toy Idle st4 maj_a w_acc.maj o /\ ptr_field w_acc.maj o i /\ field w_acc.maj o i == VPtr (Young b)))
       = maj_blocks o in
     FStar.Classical.forall_intro_3 c
 

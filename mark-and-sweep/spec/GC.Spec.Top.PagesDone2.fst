@@ -222,7 +222,8 @@ let cov_of_root (ms: minor_state) (cs: P.gstate pstate) (roots: seq U64.t) (f: U
 /// An old block's young pointer, if the nursery resolves it, is covered.
 #push-options "--z3rlimit 40"
 let old_cov (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M.world) (x i a: nat) (f: U64.t)
-  : Lemma (requires D.dpre ph st cw w /\ T.in_use pa st cw.T.cmaj w.M.maj x /\ M.ptr_field w.M.maj x i /\
+  : Lemma (requires D.dpre ph st cw w /\ T.in_use pa st cw.T.cmaj w.M.maj x /\ T.live_target pa ph st cw.T.cmaj w.M.maj x /\
+                    M.ptr_field w.M.maj x i /\
                     M.field w.M.maj x i == M.VPtr (M.Young a) /\ Some? (M.resolve w.M.yng a) /\
                     absv f == M.VPtr (M.Young a))
           (ensures PR.covered cw.T.cyng (D.cs_of ph st cw) f)
@@ -234,6 +235,7 @@ let old_cov (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M.
     Y.yrepr_elim w.M.yng cw.T.cyng;
     PM.young_ok_heq w.M.yng wc.M.yng;
     let Some o = M.resolve w.M.yng a in
+    assert (L.memP (x, i) w.M.rem);
     assert (M.resolve wc.M.yng a == Some o);
     assert (M.ptr_field wc.M.maj x i /\ M.field wc.M.maj x i == M.VPtr (M.Young a));
     old_root wc x i a o;

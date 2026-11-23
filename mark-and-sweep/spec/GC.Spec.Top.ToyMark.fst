@@ -186,11 +186,12 @@ let tmstart_m (w: world) : Lemma (mark_start_pre w ==> mark_start_post w (tmstar
   = let pre () : Lemma (requires well_formed w.maj /\ no_dark w.maj /\
                                  (forall (o: nat). reachable w o ==> is_block w.maj o /\ col_of w.maj o == White))
                        (ensures (let h' = tmstart w in
-                                 colours_only w.maj h' /\
+                                 colours_only w.maj h' /\ darken_only w.maj h' /\
                                  (forall (o: nat). outside_ref w o ==> dark (col_of h' o)) /\
                                  tricolour h' (reachable w) (fun _ -> False)))
       = let h' = tmstart w in
         tmstart_colours_only w;
+        FStar.Classical.forall_intro (start_colour w);
         let c (x: nat) : Lemma ((outside_ref w x ==> dark (col_of h' x)) /\
                                 (is_block h' x /\ dark (col_of h' x) ==> reachable w x))
           = start_colour w x; outside_b_iff w x;
@@ -299,6 +300,8 @@ let tmslice_with_m (h: mheap) (snap allocd: nat -> prop) (g: nat)
   = let live = union snap allocd in
     let h' = tmslice_with h g in
     tmslice_colours_only h g;
+    FStar.Classical.forall_intro (slice_colour h g);
+    assert (darken_only h h');
     assert (live g);
     let c (x: nat) : Lemma ((is_block h' x /\ dark (col_of h' x) ==> snap x \/ allocd x) /\
                             (allocd x ==> col_of h' x == Black) /\

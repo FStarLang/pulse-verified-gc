@@ -342,15 +342,17 @@ let sound_heq (#t: Type0) (#sk: T.sweep_kind) (a: T.allocator t sk) (ph: T.phase
     assert (M.col_of m' x == M.col_of m x);
     assert (T.live_target a ph st h m' x)
 
-let rem_heq (#t: Type0) (#sk: T.sweep_kind) (a: T.allocator t sk) (st: a.T.state) (h: t) (w w': M.world)
-  : Lemma (requires wheq w w' /\ T.rem_covers a st h w) (ensures T.rem_covers a st h w')
+let rem_heq (#t: Type0) (#sk: T.sweep_kind) (a: T.allocator t sk) (ph: T.phase sk.T.progress) (st: a.T.state)
+    (h: t) (w w': M.world)
+  : Lemma (requires wheq w w' /\ T.rem_covers a ph st h w) (ensures T.rem_covers a ph st h w')
   = let one (o i b: nat)
-      : Lemma (T.in_use a st h w'.M.maj o /\ M.ptr_field w'.M.maj o i /\
+      : Lemma (T.live_target a ph st h w'.M.maj o /\ M.ptr_field w'.M.maj o i /\
                M.field w'.M.maj o i == M.VPtr (M.Young b) ==> L.memP (o, i) w'.M.rem)
       = assert (M.is_block w'.M.maj o == M.is_block w.M.maj o);
         assert (M.hdr_of w'.M.maj o == M.hdr_of w.M.maj o);
         assert (M.field w'.M.maj o i == M.field w.M.maj o i);
         assert (T.in_use a st h w'.M.maj o == T.in_use a st h w.M.maj o);
+        assert (M.col_of w'.M.maj o == M.col_of w.M.maj o);
         assert (M.ptr_field w'.M.maj o i == M.ptr_field w.M.maj o i) in
     FStar.Classical.forall_intro_3 one
 
@@ -374,7 +376,7 @@ let minor_pre_heq (#t: Type0) (#sk: T.sweep_kind) (a: T.allocator t sk) (ph: T.p
   = GC.Spec.Top.PagesInst.wf_heq w.M.maj w'.M.maj;
     GC.Spec.Top.PagesMinor.young_ok_heq w.M.yng w'.M.yng;
     GC.Spec.Top.PagesMinor.yfollow_heq w.M.yng w'.M.yng;
-    rem_heq a st h w w';
+    rem_heq a ph st h w w';
     ysound_heq a ph st h w w'
 
 /// **The minor collection's precondition**, on the description's world:
@@ -392,7 +394,7 @@ let mpre_d (x: config fc) (d: dsc)
     okm_def (mk d.dst);
     FSt.brep_wf (mk d.dst);
     FStar.Classical.forall_intro_3 (fun o i b -> FStar.Classical.move_requires (no_young_body (mk d.dst) o i) b);
-    assert (T.rem_covers fc.a x.ast x.w.cmaj (wd d));
+    assert (T.rem_covers fc.a x.ph x.ast x.w.cmaj (wd d));
     assert (T.young_sound fc.a x.ph x.ast x.w.cmaj (wd d))
 #pop-options
 

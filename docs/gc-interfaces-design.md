@@ -2841,3 +2841,56 @@ read returns what it would return in a run without collection.
   inside a closed set holding the outside refs) is the tool for R3 and
   (3c); `ToyMark.slice_path` is the nearest existing induction over
   `wpath`.
+
+### 16.9 The five fixes, applied
+
+The fixes of §16.2 (G46–G50) are now in the specification, as proposed.
+G51 is about T1 and needs no change to the specification.
+
+| # | Change | Where |
+|---|---|---|
+| G46 | `rem_covers a ph st h w`: only the old-to-young pointers of `live_target` blocks must be remembered.  It now takes the phase. | `Iface.rem_covers`, `minor_pre` |
+| G47 | `mutator_ok_w` for `ERead`: `ptr_field` of the block (a scannable block, the index in range) and the block reachable. | `Run.mutator_ok_w` |
+| G48 | `hyps_at` for `EAlloc` with result `Ok o`: also `forall h2. free_hd_at r a st' h' h2` at the allocator's new state; `hyps_of_ok` proves it from `allocator_ok`. | `Run.hyps_at`, `hyps_of_ok` |
+| G49 | `write_post`: every word other than `o+1+i` is unchanged.  The colour change of the darkened block is in the header (`darkened`), so it is unaffected. | `Iface.write_post` |
+| G50 | New `darken_only h h'` (a block whose colour changes becomes grey or black), in `mark_start_post` and `mark_slice_post`. | `Iface` |
+
+Proof changes they caused:
+
+- `ToyMark`: the start and the slice give `darken_only`, from
+  `start_colour` and `slice_colour`.  The byte mark reuses the toy's lemmas,
+  so `ByteMark` needed nothing for it.  The toy barrier writes with
+  `set_field`, which already leaves every other word alone, and the byte
+  barrier goes through it.
+- `PagesDone2.old_cov`, `FFDone2.old_cov`: the block is also
+  `live_target`.  Their only caller, `old_field`, already had it.
+- `Broken.rem_cov`, `FollowWitness.rem_ok`: idle, where `live_target` is
+  in use.  `FFWInv.rem_heq` takes the phase and carries the colour too.
+- `Vacuity.read_major_ok` and `FFWRun.ok_read` ask the read block to be
+  scannable; the witness runs read field 0 of A, which is scannable.
+  `ok_read`'s proof is split (`en_read`), as `ok_write` was.
+- `ByteMark.yfield_intro`: the step's recursive call now comes before the
+  sequence facts are in context.  Nothing in the lemma changed, but the
+  old order timed out at seed 0 once `Iface` changed (`j < n - 1` from
+  `j < n` and `j <> n - 1`).
+
+Every broken component is still rejected: the contracts only got stronger
+for components (G49, G50) or weaker on the minor collection's input (G46),
+and no rejection used the clauses that changed.
+
+**Checking.**  All 88 `GC.Spec.Top` modules were rechecked in dependency
+order, each from a removed `.checked` file, without `--retry`, at Z3 seeds
+0, 1 and 2 (the three seeds in parallel, two jobs each).  Rlimits are at
+most 40, with no admits and no assumes.  No module outside `GC.Spec.Top`
+depends on them.
+
+| Z3 seed | modules | errors | warnings | slowest |
+|---|---|---|---|---|
+| 0 | 88 | 0 | 0 | `FFWInc`, 1039 s |
+| 1 | 88 | 0 | 0 | `FFWInc`, 1055 s |
+| 2 | 88 | 0 | 0 | `FFWInc`, 1065 s |
+
+This covers the components' contracts (`ToyComps.toy_components_ok`,
+`PagesComps.pages_components_ok`, `FFComps.ff_components_ok`), the nine
+rejections (`Broken`), and every hypothesis of both theorems on the witness
+runs (`Vacuity`, `FFWSeq`, `FFWInc`, with `FollowWitness`).

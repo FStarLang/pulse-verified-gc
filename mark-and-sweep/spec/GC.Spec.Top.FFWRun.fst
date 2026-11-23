@@ -91,12 +91,21 @@ let ok_write (sty: style) (x: config fc) (d: dsc) (o i: nat) (v: M.value)
     mutator_wd x d (EWrite (M.Major o) i v);
     en_write sty x d o i v
 
+let en_read (sty: style) (x: config fc) (d: dsc) (o i: nat)
+  : Lemma (requires holds x d /\ (Sequential? sty ==> T.Idle? d.dph))
+          (ensures enabled fc x (ERead (M.Major o) i) /\ style_ok sty x (ERead (M.Major o) i))
+  = reveal_holds ();
+    ()
+
 let ok_read (sty: style) (x: config fc) (d: dsc) (o i: nat)
   : Lemma (requires holds x d /\ (Sequential? sty ==> T.Idle? d.dph) /\
-                    M.is_block (mk d.dst) o /\ M.reachable (wd d) o /\ i < M.wz_of (mk d.dst) o)
+                    M.is_block (mk d.dst) o /\ M.reachable (wd d) o /\ i < M.wz_of (mk d.dst) o /\
+                    M.scannable (M.tag_of (mk d.dst) o))
           (ensures ok_at sty x (ERead (M.Major o) i))
-  = reveal_holds ();
-    mutator_wd x d (ERead (M.Major o) i)
+  = assert (M.ptr_field (wd d).M.maj o i);
+    assert (mutator_ok_w fc (wd d) (ERead (M.Major o) i));
+    mutator_wd x d (ERead (M.Major o) i);
+    en_read sty x d o i
 
 let ok_roots (sty: style) (x: config fc) (d: dsc) (rs: list M.value)
   : Lemma (requires holds x d /\ (Sequential? sty ==> T.Idle? d.dph) /\
