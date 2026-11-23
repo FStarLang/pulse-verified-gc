@@ -2214,8 +2214,8 @@ hypothesis, a `requires` on every witness lemma (never an `assume`), in the
 style of the page witness's `big_enough`:
 
 - **`FFWState.ff_room`**: `32 <= msize /\ 4 <= ywords`.  That is room in the
-  major heap for the objects the runs allocate (16 words below its top, plus
-  the free block), and room in the nursery for two one-field objects.
+  major heap for the objects the runs allocate (16 words below its top in the
+  sequential run, 24 in the incremental one (§15), plus the free block), and room in the nursery for two one-field objects.
 
 The real configuration meets it by orders of magnitude.  The extracted
 defaults set `minor_heap_size_u64` to 2048 bytes (`ywords` = 256).  The OCaml
@@ -2307,27 +2307,9 @@ updates that keep the shape (`FFWModel.same_shape_ok`) and by the split
 | 23 | `ERoots [A; Y1; Y2]` | idle | root change |
 | 24 | `EMinor` | idle | Y1 and Y2 live |
 
-**Incremental** (`GC.Spec.Top.FFWInc`, 30 events):
-
-| # | event | phase | what happens |
-|---|---|---|---|
-| 0-6 | as sequential 0-6 | idle | same configurations (`same_prefix`) |
-| 7 | `EStart` | idle | A grey (roots `[A]`) |
-| 8 | `EAlloc [B]` | marking | D, black |
-| 9 | `EWrite A.0 := 1` | marking | the barrier darkens B, white to grey |
-| 10 | `EMinor` | marking | empty nursery |
-| 11-13 | `ESlice` ×3 | marking | B; A (greys K); K |
-| 14 | `EHandover` | marking | |
-| 15 | `ESweep` | sweeping | the free block |
-| 16 | `EAlloc [A]` | sweeping | E, white (behind the cursor) |
-| 17 | `EWrite D.0 := K+2` | sweeping | no darkening |
-| 18 | `EMinor` | sweeping | empty nursery |
-| 19-20 | `EYoungAlloc` ×2 | sweeping | Y1 (infix pointer into K), Y2 (`infix_word 2`) |
-| 21 | `ERoots [A; E; Y1; Y2]` | sweeping | D dropped |
-| 22-26 | `ESweep` ×5 | sweeping | D, K whitened; C freed; B, A whitened |
-| 27 | `EEnd` | sweeping | |
-| 28 | `ERead A.1` | idle | the infix pointer read into a root |
-| 29 | `EMinor` | idle | Y1 and Y2 live |
+**Incremental** (`GC.Spec.Top.FFWInc`): rebuilt with promoting minor
+collections while marking and while sweeping, 34 events; the table is in
+§15.2.
 
 ### 14.4 What is proved
 
@@ -2336,7 +2318,7 @@ Every statement below is under `ff_room` only.
 - `FFWSeq.ff_vacuity_sequential`: `components_ok fc` (stage 2c), `run_ok fc
   Sequential msize ywords es_seq`, and `run_hyps fc msize ywords es_seq`.
   These are every hypothesis of `gc_correct` and `gc_correct_local`.
-- `FFWInc.ff_vacuity_incremental`: the same for `Incremental` and `es_inc`.
+- `FFWInc.ff_vacuity_incremental`: the same for `Incremental` and `es_inc`. (§15)
 - `RunFacts.run_hyps_of_ok`: the contracts give `run_hyps` for every run of
   every collector.
 - Non-triviality, on `vw` of the configuration:
@@ -2346,13 +2328,15 @@ Every statement below is under `ff_room` only.
     (`FFWStart.c_unreachable`, a closure argument).
   - `inc_darkens`: the write at 9 runs while marking, overwrites A.0 (B,
     white), and B is grey after it.
-  - `inc_interleaves`: the program allocates and writes while marking (8, 9)
-    and allocates, writes, allocates young objects and changes the roots
-    while sweeping (16, 17, 19-21).
+  - `inc_interleaves`: the program allocates, writes and allocates young
+    objects while marking (8-11) and while sweeping (18-21), and changes the
+    roots while sweeping (23); event numbers as in §15.2.
   - Minor collections run in each phase: sequential 9, 15, 24
-    (`seq_minor_phases`); incremental 10, 18, 29.
-  - `seq_infix_cases` and `inc_infix_cases`: at the last minor collection,
-    Y1 and Y2 are young-reachable from the roots.  Y1's field is `K+2`, which
+    (`seq_minor_phases`); incremental 12 (marking), 22 (sweeping), 33
+    (idle).
+  - `seq_infix_cases` (at the last minor collection) and `inc_infix_cases`
+    (at the collection while marking, 12): Y1 and Y2 are young-reachable
+    from the roots.  Y1's field is `K+2`, which
     resolves to K, in use.  Y2's field is `infix_word 2`, which `infix_hdr`
     reads as an infix header.
   - `every_event` holds of both runs.
@@ -2364,20 +2348,9 @@ Every statement below is under `ff_room` only.
   happens while marking and the barrier never darkens.  Only the
   incremental run exercises the darkening.
 - **Minor collections while marking and while sweeping run on the empty
-  nursery.**  In the sequential style nothing is allocated young during a
-  cycle, so a nursery live while marking would also be live (and promoted)
-  then.  Copies placed while marking would land in front of the sweep's
-  cursor, and their layout would have to be computed exactly to count the
-  sweep's steps.
-  - The promotions with the infix cases are therefore the last event of
-    each run, in idle.  `run_ok` asks nothing of that collection's result.
-  - This stage does not compute the result (Done, the copies' places).
-    Nor does it prove the collection's model precondition (`minor_pre`) at
-    that point.
-  - Computing one promotion of a one-field young object is the next step
-    if a promoting collection inside a cycle is wanted.  It would unfold
-    `Promote.forward_roots`, `promote_object` (first-fit from the bottom
-    block, as `FFWAlloc`), `scan` and the empty pointer update.
+  nursery** in the sequential run.  In the sequential style nothing is
+  allocated young during a cycle.  The incremental run promotes live young
+  objects in both phases (§15).
 - **One allocation size per object, and no coalescing.**  The layout keeps
   garbage away from free blocks, so the sweep's coalescing case (a free
   block grown over the next one) is not exercised.
@@ -2416,3 +2389,214 @@ start from, not the steps.  This is at least the size of the first-fit work
 | 0 | 16 | 0 | 0 | 499 s | `FFWSeq`, 96 s |
 | 1 | 16 | 0 | 0 | 505 s | `FFWSeq`, 100 s |
 | 2 | 16 | 0 | 0 | 497 s | `FFWSeq`, 101 s |
+
+## 15. Witness runs: promotions inside the cycle (first-fit)
+
+The user's request (2026-11-23): close the promotion gap of §14.5.  In the
+incremental run, add a minor collection while marking and one while
+sweeping, on a nursery holding live young objects.  Among them: Y1, an
+infix pointer into the old closure K, and Y2, an integer that reads as an
+infix header, both reachable from the roots.  Prove `minor_pre` there and
+compute the result: `Done`, each live young object promoted once through
+first-fit, the copies in the colour the colour rule gives, the young
+pointers rewritten, and Y2's integer field unchanged.  If cheap, also add a
+sweep step where garbage sits next to a free block (coalescing).
+
+Both promoting collections are built and checked.  Coalescing is not
+built (§15.5).  The hypothesis is still `ff_room` alone (§14.1): the run
+now uses 24 words below the heap's top, and `32 <= msize` leaves the free
+block at least 8 fields.
+
+### 15.1 The layout
+
+First-fit places each block at the top of the bottom free block.  Each
+collection promotes two one-field objects, Y2 first (the queue order,
+§15.3), so each adds two blocks below the earlier ones:
+
+| block | model address | placed at | colour | field |
+|---|---|---|---|---|
+| D | `msize - 13` | 8, marking | black | B, later `K+2` |
+| P1 (Y2's copy) | `msize - 15` | 12, marking | black | `infix_word 2` |
+| P2 (Y1's copy) | `msize - 17` | 12, marking | black | `K+2` |
+| E | `msize - 19` | 18, sweeping | white | A |
+| P3 (Y2's copy) | `msize - 21` | 22, sweeping | white | `infix_word 2` |
+| P4 (Y1's copy) | `msize - 23` | 22, sweeping | white | `K+2` |
+
+The colours are the colour rule's (`colour_at`).  While marking a new block
+is black.  While sweeping, a block below the cursor (`msize - 17` after the
+sweep's first step) is white: the sweep has passed it, and it is in use.
+So the sweep (24-30) visits P2, P1, D, K, C, B, A and never E, P3 or P4.
+
+### 15.2 The run
+
+`GC.Spec.Top.FFWInc`, 34 events:
+
+| # | event | phase | what happens |
+|---|---|---|---|
+| 0-6 | as sequential 0-6 | idle | A, B, C, K; A.0 := B; A.1 := K+2; roots `[A]` |
+| 7 | `EStart` | idle | A grey; A, B, K reachable, C unreachable |
+| 8 | `EAlloc [B]` | marking | D, black |
+| 9 | `EWrite A.0 := 1` | marking | the barrier darkens B, white to grey |
+| 10 | `EYoungAlloc [K+2]` | marking | Y1 at young 0: an infix pointer into K |
+| 11 | `EYoungAlloc [infix_word 2]` | marking | Y2 at young 2: an integer that reads as an infix header |
+| 12 | `EMinor` | marking | **promotes** Y2 to P1, Y1 to P2; roots `[Y2; Y1; D; A]` become `[P1; P2; D; A]` |
+| 13-15 | `ESlice` ×3 | marking | B; A (greys K); K |
+| 16 | `EHandover` | marking | |
+| 17 | `ESweep` | sweeping | the free block |
+| 18 | `EAlloc [A]` | sweeping | E, white |
+| 19 | `EWrite D.0 := K+2` | sweeping | no darkening |
+| 20-21 | `EYoungAlloc` ×2 | sweeping | Y1, Y2 again (`[K+2]`, `[infix_word 2]`) |
+| 22 | `EMinor` | sweeping | **promotes** Y2 to P3, Y1 to P4; roots rewritten |
+| 23 | `ERoots [A; E]` | sweeping | P1-P4 and D now unreachable |
+| 24-30 | `ESweep` ×7 | sweeping | P2, P1, D, K whitened; C freed; B, A whitened |
+| 31 | `EEnd` | sweeping | |
+| 32 | `ERead A.1` | idle | the infix pointer read into a root |
+| 33 | `EMinor` | idle | empty nursery |
+
+### 15.3 One promotion, computed
+
+`GC.Spec.Top.FFWMinor2` computes the collection on a nursery holding
+exactly Y1 and Y2 (`FFWYoung.ym2`), both live from the roots, over any
+heap `m` whose bottom block is free with `f >= 7` fields (`pre2`, sealed).
+The proof unfolds akhil's promotion step by step:
+
+- **Roots.**  `forward_roots` forwards the roots in order.  With roots
+  `Y2 :: Y1 :: rest`, and `rest` holding no young pointer
+  (`no_young_roots`), the queue is `[Y2; Y1]` (`roots2`, `froots`).
+- **Each object.**  `forward_one` → `forward_normal` → `promote_object`
+  (`promo1`).  Each object is read through its own header, a normal
+  one-field header; Y2's field is never read as a header.  The first-fit allocation takes the
+  bottom block and splits it right-justified (`alloc1`, via
+  `FWA.search_head` and `block_split`), in the colour `colour_at` gives.
+  The one field is copied word for word (`promoted m f col v`).  Y2 goes to
+  `f - 1` and Y1 to `f - 3` (`prom_first`, `prom_second`).
+- **The scan.**  Both copies' fields are majors or integers: the scan
+  forwards nothing and leaves the state alone (`scan_noop`, `scan2`).
+- **No failure.**  The replay's `fails_at` is false at every point
+  (`no_fail`), so `pcollect` is not `OutOfRoom` (`no_wit`).
+- **Pointer update.**  akhil's `update_pointers_with` writes a field only
+  when it holds a young pointer.  No major field does (`body_hv`), so the
+  heap is unchanged (`upw_out`, `hv_promoted`).
+- **The result** (`pcollect_two`): `Done h' st' rs fwd` with
+  - `brepr (m2 ph v w m f) h'`, the heap with exactly the two copies added;
+  - the free-list head unchanged;
+  - `fwd == F.fwd_of [(0, f-3); (2, f-1)]`, so each live young object is
+    forwarded once, to its copy;
+  - `rs == map (fwdv …) roots`, and `roots_fwd` computes it to
+    `P_Y2 :: P_Y1 :: rest`.
+
+The copy of Y2 holds `infix_word 2`.  The promotion copies it as data, and
+nothing rewrites it: it is an integer, not a pointer.  The copy of Y1 holds
+`K+2`, unchanged: a major pointer stays as it is.
+
+`step_minor2` turns this into the run's step: after `EMinor`, the
+configuration is described again (`holds`) with the copies in the heap, the
+nursery reset (`ms0`, the empty model nursery) and the rewritten roots.
+
+### 15.4 `minor_pre`, and the allocator's invariant along the run
+
+`minor_pre` asks for the allocator's invariant `fc.a.inv`.  The witness
+runs of §14 never needed it: the run's step does not read it.
+`GC.Spec.Top.FFWInv` follows it through the run, one event at a time,
+from the components' contracts (`FFComps.ff_components_ok` →
+`Run.hyps_of_ok`):
+
+- start: `init_at` (`inv_init`);
+- allocation with Fill: `alloc_at`, its post's last clause instantiated
+  with the closed form after the Fill (`inv_alloc`, `post_fill`);
+- write, mark start, mark slice: `inv_frame_at`, given `inv_frame_rel` on
+  the closed forms (`inv_write`, `inv_start`, `inv_slice`; `rel_of` builds
+  the relation from one changed word);
+- hand-over, sweep step, end: `sweep_start_at`, `sweep_step_at`,
+  `sweep_done_at` (`inv_handover`, `inv_sweep`, `inv_end`);
+- minor collection: `minor_at`, given `minor_pre` and `Done`
+  (`inv_minor`);
+- reads, root changes and young allocations leave it alone (`inv_same`).
+
+Each contract is used through a small lemma that is generic over the
+allocator (`frame_use_g`, `sweep_use_g`, `done_use_g`, `rel_g`).  This keeps
+first-fit's invariant out of the solver's context.
+
+`mpre_d` proves `minor_pre` on the description's world `wd d`:
+- the invariant;
+- `well_formed`;
+- `young_ok` and `young_follow_ok` of the two-object nursery (`ym2_ok`);
+- `rem_covers`: no major field holds a young pointer;
+- `young_sound`: Y1's `K+2` resolves to K, in use and, while sweeping, not
+  white.
+
+`minor_pre_heq` carries it to every world equal word for word.  So
+`minor_pre_12` and `minor_pre_22` hold for every world representing the
+configuration at 12 and 22.
+
+**What is proved** (each under `ff_room`):
+
+- `promoted_12`: `fc.n.collect` at 12 is `Done h' _ rs fwd` with
+  `brepr (mk st10) h'`, `fwd 2 == Some P1`, `fwd 0 == Some P2`,
+  `rs == [P1; P2; D; A]`, P1 and P2 black, P1's field `infix_word 2`
+  and P2's field `K+2`.  It is never `OutOfRoom`.
+- `promoted_22`: the same at 22 with P3, P4, both white, and
+  `rs == P3 :: P4 :: E :: [P1; P2; D; A]`.
+- `minor_pre_12`, `minor_pre_22`: as above.
+- `ff_vacuity_incremental`, `inc_run_ok`, `inc_every_event`,
+  `inc_nontrivial`, `inc_darkens`, `inc_interleaves` and `inc_infix_cases`
+  (at 12: Y1 and Y2 young-reachable, Y1's field `K+2` resolving to K in
+  use, Y2's field reading as an infix header).
+
+`run_ok`'s minor step still asks nothing of the result.  The computed
+result is proved as a separate statement about `fc.n.collect` at that
+configuration, and the run's configuration after the step is that result
+(`step_minor2`).
+
+### 15.5 Coalescing: not built
+
+In the layout, garbage never sits next to a free block.  C is freed with
+K below it and B above it, both in use.  A coalescing step needs three
+things:
+
+- a layout change shared with the sequential run, which also fixes the
+  first seven events;
+- a model lemma for akhil's merge case of the sweep (the free block grown
+  over the next one) in closed form, with its representability proof, as
+  `FFWSweep.sweep_white` is for the case that does not coalesce;
+- the free list's shape after the merge, carried through the later steps.
+
+That is a stage of its own (the size of `FFWSweep`, plus a rework of the
+first seven events), not cheap, so it is not built.
+
+### 15.6 Files and results
+
+- **New**: `GC.Spec.Top.FFWMinor2` (one promoting collection, computed),
+  `GC.Spec.Top.FFWInv` (the allocator's invariant along a run;
+  `minor_pre`).
+- **Changed**:
+  - `FFWState`: the new blocks E and P1-P4 and their positions, and the
+    record fields `cp1`-`cp4`;
+  - `FFWOps`: `promo_M`, `promo_S`, `two`, and `alloc_E` at its new
+    address; `alloc_K` split into pointwise header and body lemmas (it
+    failed at seed 1 once `mk` had more cases);
+  - `FFWStep`: `wheq_sym`; `FFWSeq`: `seq_infix_cases` uses it (it failed
+    at seed 1);
+  - `FFWStart`: the copies are absent at the cycle's start;
+  - `FFWInc`: rebuilt, 34 events;
+  - this document: §14.1, §14.3, §14.4 and §14.5 updated, and §15 added.
+- `FFWInc` is already in `ROOT_MODULES` and imports both new modules.
+
+Checked without `--retry` at Z3 seeds 0, 1 and 2.  For each seed, the 17
+witness modules `FFWWords` … `FFWInc`, plus `FFWrite`, were rechecked after
+their dependencies, each from a removed `.checked` file.  The three seeds ran
+in parallel, two jobs each, so the times are slower than a lone run.  Rlimits
+are at most 40, with no admits and no assumes.
+
+| Z3 seed | modules | errors | warnings | total time | slowest |
+|---|---|---|---|---|---|
+| 0 | 18 | 0 | 0 | 2069 s | `FFWInc`, 634 s |
+| 1 | 18 | 0 | 0 | 2067 s | `FFWInc`, 628 s |
+| 2 | 18 | 0 | 0 | 2071 s | `FFWInc`, 630 s |
+
+The cherry-picked robustness commits (2c7b8918, d6aa4b11) change
+`Pages.PoolInit`, `Frame`, `NewRun`, `SweepPage` and `SweepPools`.  The 139
+modules that depend on them, spec and Impl, were rechecked at each seed
+with the repository's flags (`--retry 3` for modules that are not mine, as
+in the build).  All 139 are clean at seeds 0, 1 and 2.  The one warning is
+the existing warning 328 in `Pages.SweepAll`.

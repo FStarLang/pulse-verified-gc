@@ -736,6 +736,7 @@ let seq_infix_cases ()
     infix_w0 ();
     views_wd x (d24 ());
     holds_def x (d24 ());
+    wheq_sym (vw x) w0;
     yreachable_wheq w0 (vw x) 0;
     yreachable_wheq w0 (vw x) 2;
     resolve_heq w0.M.maj (vw x).M.maj (xK + 2);

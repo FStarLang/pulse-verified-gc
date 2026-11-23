@@ -100,6 +100,11 @@ let views_d (x: config fc) (d: dsc) : Lemma (requires holds x d) (ensures views 
 
 /// **The description's world represents the configuration, and so does
 /// `vw x`, with the same reading.**
+/// `wheq`, the other way round.
+let wheq_sym (w1 w2: M.world) : Lemma (requires wheq w1 w2) (ensures wheq w2 w1)
+  = R.heq_sym w1.M.maj w2.M.maj;
+    R.heq_sym w1.M.yng w2.M.yng
+
 let views_wd (x: config fc) (d: dsc)
   : Lemma (requires holds x d)
           (ensures views x (wd d) /\ has_view x /\ wheq (vw x) (wd d) /\

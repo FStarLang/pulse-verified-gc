@@ -11,7 +11,9 @@
 /// First-fit places each new block at the top of the free block at 0
 /// (`FFWAlloc.split`), so the runs' blocks sit at fixed distances below the
 /// top: A (2 fields), B (1), C (1), K (a closure of 3 fields, an infix header
-/// in its second), D (1), E (1).  Every model heap of the runs is `mk st`
+/// in its second), D (1), the two copies the minor collection while marking
+/// promotes (P1 of Y2, P2 of Y1), E (1), and the two the one while sweeping
+/// promotes (P3, P4).  Every model heap of the runs is `mk st`
 /// for a small record `st`: the free block's size, each block's colour
 /// (`None` before it is allocated), the fields the program writes, and the
 /// free list's link in the free block's first field.
@@ -57,12 +59,17 @@ let xB : nat = sub msize 5
 let xC : nat = sub msize 7
 let xK : nat = sub msize 11
 let xD : nat = sub msize 13
-let xE : nat = sub msize 15
+let xE : nat = sub msize 19
+let xP1 : nat = sub msize 15   (* the copy of Y2, promoted while marking *)
+let xP2 : nat = sub msize 17   (* the copy of Y1, promoted while marking *)
+let xP3 : nat = sub msize 21   (* the copy of Y2, promoted while sweeping *)
+let xP4 : nat = sub msize 23   (* the copy of Y1, promoted while sweeping *)
 
 let xs (_: unit)
   : Lemma (requires ff_room)
           (ensures xA == msize - 3 /\ xB == msize - 5 /\ xC == msize - 7 /\ xK == msize - 11 /\
-                   xD == msize - 13 /\ xE == msize - 15)
+                   xD == msize - 13 /\ xE == msize - 19 /\ xP1 == msize - 15 /\ xP2 == msize - 17 /\
+                   xP3 == msize - 21 /\ xP4 == msize - 23)
   = ()
 
 /// ---------------------------------------------------------------------------
@@ -77,6 +84,8 @@ noeq type wst = {
   ck : option M.colour;
   cd : option M.colour;
   ce : option M.colour;
+  cp1 : option M.colour;  cp2 : option M.colour;  (* the copies of Y2 and Y1, while marking *)
+  cp3 : option M.colour;  cp4 : option M.colour;  (* the copies of Y2 and Y1, while sweeping *)
   a0 : M.value;  a1 : M.value;  (* A's fields *)
   c0 : M.value;                 (* C's field *)
   d0 : M.value;                 (* D's field *)
@@ -94,6 +103,10 @@ let mhd (st: wst) (x: nat) : option M.header =
   else if x = xK then ohd 3 M.closure_tag st.ck
   else if x = xD then ohd 1 0 st.cd
   else if x = xE then ohd 1 0 st.ce
+  else if x = xP1 then ohd 1 0 st.cp1
+  else if x = xP2 then ohd 1 0 st.cp2
+  else if x = xP3 then ohd 1 0 st.cp3
+  else if x = xP4 then ohd 1 0 st.cp4
   else None
 
 let mbody (st: wst) (w: nat) : M.value =
@@ -107,6 +120,10 @@ let mbody (st: wst) (w: nat) : M.value =
   else if Some? st.ck && w = xK + 3 then M.VInt 1
   else if Some? st.cd && w = xD + 1 then st.d0
   else if Some? st.ce && w = xE + 1 then M.VPtr (M.Major xA)
+  else if Some? st.cp1 && w = xP1 + 1 then M.infix_word 2
+  else if Some? st.cp2 && w = xP2 + 1 then M.VPtr (M.Major (xK + 2))
+  else if Some? st.cp3 && w = xP3 + 1 then M.infix_word 2
+  else if Some? st.cp4 && w = xP4 + 1 then M.VPtr (M.Major (xK + 2))
   else M.VInt 0
 
 let mk (st: wst) : M.mheap = { M.size = msize; M.hd = mhd st; M.body = mbody st }
@@ -114,15 +131,23 @@ let mk (st: wst) : M.mheap = { M.size = msize; M.hd = mhd st; M.body = mbody st 
 /// The start: one free block.
 let st0 : wst = {
   f = sub msize 1; ca = None; cb = None; cc = None; ck = None; cd = None; ce = None;
+  cp1 = None; cp2 = None; cp3 = None; cp4 = None;
   a0 = M.VInt 0; a1 = M.VInt 0; c0 = M.VInt 0; d0 = M.VInt 0; lk = M.VInt 0 }
 
 /// Representability is about the reading alone.
-let brep_heq (m m': M.mheap)
-  : Lemma (requires brep_ok m /\ R.heq m m') (ensures brep_ok m')
+let brep_heq_parts (m m': M.mheap)
+  : Lemma (requires brep_ok m /\ R.heq m m')
+          (ensures M.well_formed m' /\ m'.M.size == msize /\
+                   (forall (o: nat). M.is_block m' o ==> M.wz_of m' o >= 1) /\
+                   (forall (w: nat). R.field_word m' w ==> storable_w (m'.M.body w)))
   = reveal_opaque (`%brep_ok) (brep_ok m);
     assert (forall (o w: nat). M.covers m o w == M.covers m' o w);
-    assert (forall (w: nat). R.field_word m w <==> R.field_word m' w);
-    reveal_opaque (`%brep_ok) (brep_ok m')
+    assert (forall (w: nat). R.field_word m w <==> R.field_word m' w)
+
+let brep_heq (m m': M.mheap)
+  : Lemma (requires brep_ok m /\ R.heq m m') (ensures brep_ok m')
+  = brep_heq_parts m m';
+    brep_ok_intro m'
 
 /// ---------------------------------------------------------------------------
 /// The initial heap

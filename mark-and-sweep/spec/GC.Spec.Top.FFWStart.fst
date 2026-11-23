@@ -33,7 +33,8 @@ let vK2 : M.value = M.VPtr (M.Major (xK + 2))
 /// The heap the cycle starts on.
 let st_start (st: wst) : prop =
   st.ca == Some M.White /\ st.cb == Some M.White /\ st.cc == Some M.White /\ st.ck == Some M.White /\
-  st.cd == None /\ st.ce == None /\ st.a0 == vB /\ st.a1 == vK2
+  st.cd == None /\ st.ce == None /\ st.cp1 == None /\ st.cp2 == None /\ st.cp3 == None /\ st.cp4 == None /\
+  st.a0 == vB /\ st.a1 == vK2
 
 let sS (x: nat) : prop = x == xA \/ x == xB \/ x == xK
 
