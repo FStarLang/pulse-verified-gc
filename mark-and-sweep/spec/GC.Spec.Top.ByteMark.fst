@@ -563,12 +563,15 @@ let rec young_good (g: heap) (y: M.mheap) (n: nat)
 
 let rec young_intro (g: heap) (y: M.mheap) (n o i x: nat)
   : Lemma (requires o < n /\ yhit g y o i x) (ensures hits g (young_ws (cabs g) y n) x) (decreases n)
-  = young_unfold (cabs g) y n;
-    append_hit g (yblock (cabs g) y (n - 1)) (young_ws (cabs g) y (n - 1)) x;
-    if o < n - 1 then young_intro g y (n - 1) o i x
-    else begin
+  = if o < n - 1 then begin
+      young_intro g y (n - 1) o i x;
+      young_unfold (cabs g) y n;
+      append_hit g (yblock (cabs g) y (n - 1)) (young_ws (cabs g) y (n - 1)) x
+    end else begin
       assert (o == n - 1);
-      yfield_intro g y o (M.wz_of y o) i x
+      yfield_intro g y o (M.wz_of y o) i x;
+      young_unfold (cabs g) y n;
+      append_hit g (yblock (cabs g) y (n - 1)) (young_ws (cabs g) y (n - 1)) x
     end
 
 let rec young_elim (g: heap) (y: M.mheap) (n x: nat)

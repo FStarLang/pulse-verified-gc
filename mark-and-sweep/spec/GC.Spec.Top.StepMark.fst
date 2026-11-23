@@ -11,14 +11,8 @@
 ///     reachable block resolve to reachable blocks.
 ///   - `ESlice`: the same, with the tricolour invariant of the cycle.
 ///
-/// Both use `darken_only` (G50) to meet `inv_frame_rel`.  `darken_only`
-/// quantifies over every address, also past the heap's end, where a model's
-/// header is free (faithfulness fixes headers below `size` only); there a
-/// mark meeting its contract may change a colour, and `inv_frame_rel` then
-/// fails.  This is gap G52 (design doc §16.10).  Until it is fixed in the
-/// specification, `start_blocks_only` and `slice_blocks_only` state the
-/// missing guarantee as explicit hypotheses of `start_step` and
-/// `slice_step`; with the proposed fix they follow from the posts.
+/// Both use `darken_only` (G50, and G52: only blocks change colour,
+/// design doc §16.10) to meet `inv_frame_rel`.
 
 module GC.Spec.Top.StepMark
 
@@ -35,21 +29,6 @@ module L = FStar.List.Tot
 module C = FStar.Classical
 
 #set-options "--fuel 1 --ifuel 1 --z3rlimit 20"
-
-/// ---------------------------------------------------------------------------
-/// G52, as hypotheses
-/// ---------------------------------------------------------------------------
-
-/// A mark start changes no colour outside the blocks.
-let start_blocks_only (#c: comps) (x: config c) : prop =
-  forall (w: world) (m': mheap). views x w /\ c.r.repr m' (c.m.mstart x.w) /\ mark_start_post w m' ==>
-    (forall (o: nat). col_of m' o =!= col_of w.maj o ==> is_block w.maj o)
-
-/// A mark slice changes no colour outside the blocks.
-let slice_blocks_only (#c: comps) (x: config c) : prop =
-  forall (m m': mheap). c.r.repr m x.w.cmaj /\ c.r.repr m' (c.m.mslice x.w.cmaj) /\
-    mark_slice_post x.snap x.allocd m m' ==>
-    (forall (o: nat). col_of m' o =!= col_of m o ==> is_block m o)
 
 /// ---------------------------------------------------------------------------
 /// Only colours change
@@ -97,13 +76,16 @@ let tricolour_ext (m: mheap) (s a s' a': nat -> prop)
           (ensures tricolour m s' a')
   = ()
 
+let marking_closed (#c: comps) (x: config c)
+  : Lemma (requires Marking? x.ph /\ r_col x (vw x)) (ensures closed (mj x) (union x.snap x.allocd))
+  = reveal_opaque (`%r_col) (r_col #c)
+
 /// ---------------------------------------------------------------------------
 /// The allocator's invariant through the mark
 /// ---------------------------------------------------------------------------
 
 let mark_frame (#c: comps) (x: config c) (h': c.t) (m': mheap) (live: nat -> prop)
   : Lemma (requires has_view x /\ colours_only (mj x) m' /\ darken_only (mj x) m' /\
-                    (forall (o: nat). col_of m' o =!= col_of (mj x) o ==> is_block (mj x) o) /\
                     (forall (o: nat). is_block m' o /\ dark (col_of m' o) ==> live o) /\
                     (forall (o: nat). live o ==> in_use_c x o))
           (ensures inv_frame_rel c.a Marking x.ast x.w.cmaj (mj x) m')
@@ -183,6 +165,7 @@ let st_inv (#c: comps) (x x': config c) (h': c.t) (m': mheap)
   = reveal_opaque (`%r_heap) (r_heap #c);
     colours_wf (mj x) m';
     tricolour_ext m' (reachable (vw x)) (fun _ -> False) x'.snap x'.allocd;
+    tri_of_tricolour x' m';
     snap_closed x m';
     let cl (o: nat) : Lemma (union (reachable (vw x)) (fun _ -> False) o <==> union x'.snap x'.allocd o) = () in
     C.forall_intro cl;
@@ -207,7 +190,7 @@ let st_cs (#c: comps) (x x': config c) (h': c.t) (m': mheap)
 
 #push-options "--z3rlimit 40"
 let start_step (#c: comps) (x: config c)
-  : Lemma (requires faithful c.r /\ rinv x /\ hyps_at c x EStart /\ enabled c x EStart /\ start_blocks_only x)
+  : Lemma (requires faithful c.r /\ rinv x /\ hyps_at c x EStart /\ enabled c x EStart)
           (ensures (let x' = step c x EStart in rinv x' /\ concl_step x EStart x' /\ rback x x'))
   = let e = EStart in
     let x' = step c x e in
@@ -284,7 +267,9 @@ let sl_inv (#c: comps) (x x': config c) (h': c.t) (m': mheap)
     assert (x'.ph == Marking);
     assert (r_heap x' w');
     reveal_opaque (`%r_col) (r_col #c);
+    marking_closed x;
     colours_closed (mj x) m' (union x.snap x.allocd);
+    tri_of_tricolour x' m';
     assert (r_col x' w');
     C.forall_intro (C.move_requires (sl_live1 x x' h' m'));
     reveal_opaque (`%r_live) (r_live #c);
@@ -309,7 +294,7 @@ let sl_cs (#c: comps) (x x': config c) (h': c.t) (m': mheap)
 
 #push-options "--z3rlimit 40"
 let slice_step (#c: comps) (x: config c)
-  : Lemma (requires faithful c.r /\ rinv x /\ hyps_at c x ESlice /\ enabled c x ESlice /\ slice_blocks_only x)
+  : Lemma (requires faithful c.r /\ rinv x /\ hyps_at c x ESlice /\ enabled c x ESlice)
           (ensures (let x' = step c x ESlice in rinv x' /\ concl_step x ESlice x' /\ rback x x'))
   = let e = ESlice in
     let x' = step c x e in
@@ -317,7 +302,7 @@ let slice_step (#c: comps) (x: config c)
     let m = w.maj in
     vw_views x;
     reveal_opaque (`%r_heap) (r_heap #c);
-    reveal_opaque (`%r_col) (r_col #c);
+    marking_tricolour x;
     assert (mark_slice_pre x.snap x.allocd m);
     let h' = c.m.mslice x.w.cmaj in
     let m' = FStar.IndefiniteDescription.indefinite_description_ghost mheap

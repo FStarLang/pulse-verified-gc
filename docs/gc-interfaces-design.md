@@ -2929,6 +2929,13 @@ Until the fix is approved, `StepMark.start_step` and `slice_step` take the
 missing guarantee as explicit hypotheses (`start_blocks_only`,
 `slice_blocks_only`); with the fix they follow from the posts.
 
+*Applied (approved after checkpoint A):* `darken_only` now reads
+`col_of h' o =!= col_of h o ==> is_block h o /\ dark (col_of h' o)`.
+`ToyMark` proves it with `start_darken` and `slice_darken` (a recoloured
+address resolves, or is the grey block the slice scans), and `ByteMark`
+reuses them.  The two hypotheses are gone: `start_step` and `slice_step`
+assume only the step's contracts.
+
 **Left.**  The step lemmas for `EAlloc`, `EWrite (Major _)` and `EMinor`
 (checkpoint B), then `Point`, `Cycle`, `TwoCycles`, `Correct`, T2 and T1.
 Checking the contracts against the invariant for those three found no
@@ -2948,3 +2955,58 @@ No existing module changed.
 | `StepMut` | 368 | 50 s | 41 s | 47 s |
 | `StepSweep` | 362 | 25 s | 24 s | 25 s |
 | `StepMark` | 337 | 44 s | 46 s | 43 s |
+
+### 16.11 Checkpoint B: allocation, the barrier write, the minor collection
+
+Proved, with no admit or assume, rlimits at most 40.  Every step lemma has
+the shape of §16.10 (`rinv x /\ hyps_at c x e /\ ... ==> rinv x' /\
+concl_step x e x' /\ rback x x'`), with no hypothesis beyond the step's
+contracts and the mutator's obligations.
+
+| Module | Content |
+|---|---|
+| `Top.StepFacts` | What the three steps keep of a block in use: `keepsy` (same header, every field that is not a young pointer).  `resolve_keepy`: a pointer to such a block resolves as before.  `lpath_keepy`: paths from a live grey block through white ones survive when the live set is closed and kept.  `one_word_resolve`: a store into a field of a block that is not a closure leaves every resolution.  `copy_infix`: a forwarded infix pointer resolves to the copy. |
+| `Top.StepAlloc` | `EAlloc`, clause (2).  No room: nothing changes.  Room: only `o` is new; it is kept (in use and allocated in the cycle) and coloured by `colour_at`, so each phase's colour invariant holds with `o` in `allocd`; the allocator's invariant after the Fill comes from the post with sound values (G48 gives allocation status after the Fill). |
+| `Top.StepWrite` | `EWrite (Major _)`.  Resolution is unchanged, nothing new is reachable, `inv_frame_rel` holds (G49).  Snapshot-at-the-beginning (`w_lpath_rec`): along a path from a live grey block through white ones, each block is greyed by the barrier or still reached by such a path, because the only edge a store cuts leads to the block the barrier greys.  Clause (6): a greyed live block strictly decreases the measure. |
+| `Top.StepMinor` | `EMinor`, clause (3d).  `minor_pre_of`: the precondition from the invariant.  Every young pointer of a root, of a block the program may use (remembered: `LRem`), or of a traced young object (`LStep`) is forwarded to a copy (`fv`), so after the reset none is left where the invariant looks.  Reachable after: reachable before, or a copy.  Out of room: the run stops. |
+
+**Change to the invariant.**  R5 while marking is now stated over blocks
+in use (`RInv.tri_iu`), with grey-to-white paths that start at a *live*
+grey block (`lpath`).  The allocation's and the minor collection's
+contracts leave the colours of free blocks open, so the all-blocks
+`tricolour` could not be carried across them.  The two forms are
+equivalent when free blocks are not dark (`tricolour_of_tri`,
+`tri_of_tricolour`), and `free_white` (a hypothesis of every step) gives
+that at the steps that need the full form (`ESlice`, `EHandover`).  This
+is not a gap in the specification.
+
+**Robustness.**  `ByteMark.young_intro` timed out at seeds 0 and 1 after
+the G52 change, the same failure as `yfield_intro` in §16.9; the same
+reordering fixed it (the recursive call first).
+
+**No new gap.**
+
+**Left.**  `Top.Point` (one step lemma per event, the induction over the
+run, `concl_point` at every point), `Top.Cycle` ((3a), (3b), (4)),
+`Top.TwoCycles` ((3c), from `rback`), `Top.Correct`, then T2 and T1.
+
+**Checking.**  Everything that depends on `Iface` was rechecked at Z3
+seeds 0, 1 and 2 without `--retry`, in dependency order from removed
+`.checked` files: the 88 modules of §16.9 (toy, pages and first-fit
+components, the broken components, the witness runs) and the eleven new
+modules.  All are clean.  The slowest existing module is `FFWInc` (654 s,
+654 s, 387 s).
+
+| New module | lines | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|---|
+| `Views` | 323 | 2 s | 2 s | 2 s |
+| `Words` | 273 | 2 s | 2 s | 2 s |
+| `RInv` | 410 | 3 s | 3 s | 3 s |
+| `StepBase` | 392 | 3 s | 3 s | 3 s |
+| `StepMut` | 368 | 29 s | 30 s | 33 s |
+| `StepSweep` | 375 | 19 s | 19 s | 22 s |
+| `StepMark` | 322 | 49 s | 51 s | 51 s |
+| `StepFacts` | 211 | 5 s | 4 s | 4 s |
+| `StepAlloc` | 632 | 122 s | 120 s | 114 s |
+| `StepWrite` | 498 | 58 s | 53 s | 56 s |
+| `StepMinor` | 754 | 27 s | 27 s | 27 s |

@@ -153,6 +153,18 @@ let start_colour (w: world) (x: nat)
            (if Some? (w.maj.hd x) && outside_b w x && col_of w.maj x = White then Grey else col_of w.maj x))
   = ()
 
+/// Only blocks change colour, and they darken (G50, G52).
+let start_darken1 (w: world) (x: nat)
+  : Lemma (col_of (tmstart w) x =!= col_of w.maj x ==> is_block w.maj x /\ dark (col_of (tmstart w) x))
+  = start_colour w x;
+    if outside_b w x then begin
+      outside_b_iff w x;
+      FStar.Classical.forall_intro (resolve_resolves w.maj x)
+    end
+
+let start_darken (w: world) : Lemma (darken_only w.maj (tmstart w))
+  = FStar.Classical.forall_intro (start_darken1 w)
+
 let tmstart_colours_only (w: world) : Lemma (colours_only w.maj (tmstart w))
   = let h' = tmstart w in
     let a (o: nat) : Lemma (is_block h' o == is_block w.maj o /\ wz_of h' o == wz_of w.maj o /\
@@ -213,7 +225,9 @@ let tmstart_m (w: world) : Lemma (mark_start_pre w ==> mark_start_post w (tmstar
         assert (forall (o: nat). reachable w o ==> is_block h' o);
         assert (forall (o: nat). is_block h' o /\ dark (col_of h' o) ==> reachable w o \/ False);
         assert (forall (o: nat). reachable w o /\ col_of h' o == White ==> grey_reached h' o);
-        assert (tricolour h' (reachable w) (fun _ -> False))
+        assert (tricolour h' (reachable w) (fun _ -> False));
+        start_darken w;
+        assert (darken_only w.maj h')
     in
     FStar.Classical.move_requires pre ()
 
@@ -238,6 +252,18 @@ let slice_colour (h: mheap) (g x: nat)
             else if Some? (h.hd x) && col_of h x = White && edge_b h g x then Grey
             else col_of h x))
   = ()
+
+let slice_darken1 (h: mheap) (g x: nat)
+  : Lemma (requires is_block h g)
+          (ensures col_of (tmslice_with h g) x =!= col_of h x ==> is_block h x /\ dark (col_of (tmslice_with h g) x))
+  = slice_colour h g x;
+    if edge_b h g x then begin
+      edge_b_iff h g x;
+      FStar.Classical.forall_intro (resolve_resolves h x)
+    end
+
+let slice_darken (h: mheap) (g: nat) : Lemma (requires is_block h g) (ensures darken_only h (tmslice_with h g))
+  = FStar.Classical.forall_intro (slice_darken1 h g)
 
 let wpath_not_black (#h: mheap) (#x: nat) (p: wpath h x)
   : Lemma (is_block h x /\ col_of h x <> Black)
@@ -300,6 +326,7 @@ let tmslice_with_m (h: mheap) (snap allocd: nat -> prop) (g: nat)
   = let live = union snap allocd in
     let h' = tmslice_with h g in
     tmslice_colours_only h g;
+    slice_darken h g;
     FStar.Classical.forall_intro (slice_colour h g);
     assert (darken_only h h');
     assert (live g);

@@ -395,9 +395,10 @@ let mark_no_increase (h h': mheap) (live: nat -> prop) : prop =
    (forall (o: nat). grey_live h' live o ==> grey_live h live o))
 
 /// The mark only darkens: a block whose colour changes becomes grey or
-/// black (G50, design doc §16.2).
+/// black (G50, design doc §16.2); no other address changes colour (G52,
+/// §16.10: a model's headers past the heap's end are free).
 let darken_only (h h': mheap) : prop =
-  forall (o: nat). col_of h' o =!= col_of h o ==> dark (col_of h' o)
+  forall (o: nat). col_of h' o =!= col_of h o ==> is_block h o /\ dark (col_of h' o)
 
 let no_dark (h: mheap) : prop = forall (o: nat). is_block h o ==> not (dark (col_of h o))
 

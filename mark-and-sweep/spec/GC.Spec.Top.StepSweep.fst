@@ -78,9 +78,21 @@ let free_white_of (#c: comps) (x: config c) (o: nat)
 /// EHandover
 /// ---------------------------------------------------------------------------
 
+/// While marking, with free blocks not dark: the tricolour invariant.
+let marking_tricolour (#c: comps) (x: config c)
+  : Lemma (requires has_view x /\ Marking? x.ph /\ free_white_at c.r c.a x.ph x.w.cmaj x.ast /\
+                    c.a.inv x.ph x.w.cmaj x.ast /\ r_col x (vw x))
+          (ensures tricolour (mj x) x.snap x.allocd /\ closed (mj x) (union x.snap x.allocd))
+  = reveal_opaque (`%r_col) (r_col #c);
+    let fw (o: nat) : Lemma (is_block (mj x) o /\ c.a.free x.ast x.w.cmaj o ==> not (dark (col_of (mj x) o)))
+      = if is_block (mj x) o then free_white_of x o in
+    C.forall_intro fw;
+    tricolour_of_tri x (mj x)
+
 let ho_col (#c: comps) (x: config c) (p: c.k.progress) (o: nat)
   : Lemma (requires has_view x /\ Marking? x.ph /\ free_white_at c.r c.a x.ph x.w.cmaj x.ast /\
-                    c.a.inv x.ph x.w.cmaj x.ast /\ r_col x (vw x) /\ no_grey (mj x) /\ in_use_c x o)
+                    c.a.inv x.ph x.w.cmaj x.ast /\ r_col x (vw x) /\ no_grey (mj x) /\ in_use_c x o /\
+                    tricolour (mj x) x.snap x.allocd)
           (ensures col_sweep x p (mj x) o)
   = reveal_opaque (`%r_col) (r_col #c);
     let m = mj x in
@@ -97,7 +109,7 @@ let handover_step (#c: comps) (x: config c)
     let m = w.maj in
     vw_views x;
     reveal_opaque (`%r_heap) (r_heap #c);
-    reveal_opaque (`%r_col) (r_col #c);
+    marking_tricolour x;
     dark_closed_of m x.snap x.allocd;
     let (p, st') = c.s.start x.w.cmaj x.ast in
     assert (sweep_start_m c.s x.w.cmaj x.ast m);
@@ -113,6 +125,7 @@ let handover_step (#c: comps) (x: config c)
     (* the rest of the invariant *)
     assert (r_heap x' w);
     C.forall_intro (C.move_requires (ho_col x p));
+    reveal_opaque (`%r_col) (r_col #c);
     assert (r_col x' w);
     reveal_opaque (`%r_live) (r_live #c);
     assert (r_live x' w);
