@@ -2894,3 +2894,57 @@ This covers the components' contracts (`ToyComps.toy_components_ok`,
 `PagesComps.pages_components_ok`, `FFComps.ff_components_ok`), the nine
 rejections (`Broken`), and every hypothesis of both theorems on the witness
 runs (`Vacuity`, `FFWSeq`, `FFWInc`, with `FollowWitness`).
+
+### 16.10 Checkpoint A: views, the run invariant, and the first step lemmas
+
+Proved, with no admit or assume, rlimits at most 40:
+
+| Module | Content |
+|---|---|
+| `Top.Views` | `agree`-invariance of blocks, headers, fields, `covers`, `resolve`, edges, `well_formed`, `young_ok`, in-use and free words, `live_target`, `sound_value`; of `reachable`, `yreachable`, `minor_live`, `value_ok` (worlds that agree, `wagree`); of `wpath`, `tricolour`, `closed` and the mark's measures.  `vw_agree`: every world that views `x` agrees with `vw x`. |
+| `Top.Words` | Tiling: one block per word, so a word is free or in use, not both (`word_xor`).  The Fill and a store change only their block's fields.  `resolve_keep`: a pointer to a block that the next heap keeps resolves to it there.  `reach_within`.  The nursery's allocation and store keep every young pointer resolving. |
+| `Top.RInv` | R1–R6 as six sealed parts (`r_heap`, `r_reach`, `r_res`, `r_young`, `r_col`, `r_live`), each moved between agreeing worlds; `rinv_init` gives (0) and the invariant of the initial configuration; `point_of_rinv` gives `concl_point` ((1b), the partition (5)). |
+| `Top.StepBase` | What a step lemma proves (`step_out`: the invariant, every clause of `concl_step`, and `rback`, "no object in use becomes reachable", for (3c)), on the world the contract hands back; `step_out_intro` moves it to `vw x'`.  `heap_step`: the reachability parts of the invariant after any step that keeps the reachable blocks. |
+| `Top.StepMut` | `ERead` (both kinds), `ERoots`, `EYoungAlloc`, `EWrite (Young _)`, and the read clause. |
+| `Top.StepSweep` | `EHandover` (`dark_closed` from the tricolour invariant and no grey block), `ESweep`, `EEnd`. |
+| `Top.StepMark` | `EStart`, `ESlice`, under the hypotheses of G52 below. |
+
+The invariant differs from §16.3 in two details.  R3 asks every pointer of
+a root, of a reachable block or of any young block to *resolve*; that its
+target is kept follows (`point_of_rinv`).  R4 asks the young pointers of
+`live_target` blocks to resolve and be remembered, which is what the minor
+step needs.
+
+**New gap G52.**  `darken_only h h'` quantifies over every address, also
+past the heap's end.  Faithfulness fixes a model's headers below `size`
+only, so a mark that meets its contract may give a model whose header past
+the end changes colour (to grey).  `inv_frame_rel` then fails: it asks a
+recoloured address to be a block in use.  So neither the start nor a slice
+can be shown to keep the allocator's invariant.  Proposed fix: in
+`darken_only`, `col_of h' o =!= col_of h o ==> is_block h o /\ dark (col_of
+h' o)` ("a *block* whose colour changes", as §16.2 says).  The toy mark
+recolours only blocks (a header that resolves, or the chosen grey block),
+so the fix should cost a few lines in `ToyMark`, and `ByteMark` reuses it.
+Until the fix is approved, `StepMark.start_step` and `slice_step` take the
+missing guarantee as explicit hypotheses (`start_blocks_only`,
+`slice_blocks_only`); with the fix they follow from the posts.
+
+**Left.**  The step lemmas for `EAlloc`, `EWrite (Major _)` and `EMinor`
+(checkpoint B), then `Point`, `Cycle`, `TwoCycles`, `Correct`, T2 and T1.
+Checking the contracts against the invariant for those three found no
+further gap: G48 gives allocation status after the Fill, G49 the barrier's
+other words, G46 and R4 a minor collection's remembered set.
+
+**Checking.**  The seven new modules were checked in dependency order, each
+from a removed `.checked` file, without `--retry`, at Z3 seeds 0, 1 and 2.
+No existing module changed.
+
+| Module | lines | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|---|
+| `Views` | 323 | 3 s | 3 s | 3 s |
+| `Words` | 273 | 3 s | 2 s | 3 s |
+| `RInv` | 323 | 4 s | 4 s | 4 s |
+| `StepBase` | 392 | 6 s | 6 s | 6 s |
+| `StepMut` | 368 | 50 s | 41 s | 47 s |
+| `StepSweep` | 362 | 25 s | 24 s | 25 s |
+| `StepMark` | 337 | 44 s | 46 s | 43 s |
