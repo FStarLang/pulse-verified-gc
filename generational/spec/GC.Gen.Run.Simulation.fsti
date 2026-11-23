@@ -2,7 +2,7 @@
 /// GC.Gen.Run.Simulation - the program cannot tell the collector is there
 /// ---------------------------------------------------------------------------
 ///
-/// The mutator-equivalence theorem (mutator-equivalence-plan.md, section 1).
+/// The mutator-equivalence theorem.
 /// Two executions of the same program: the **real** one, a run of `step`
 /// (`GC.Gen.Run.Step`) from the initial state, where the collector -- stop
 /// the world or incremental -- runs whenever the runtime decides; and the

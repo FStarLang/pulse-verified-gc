@@ -12,7 +12,7 @@
 ///   p4. `Read` it back.
 ///
 /// The real run allocates both in the nursery (at offsets 8 and 24), stores
-/// with a nursery write, and reads.  No collection runs.  Stage 0d's nursery
+/// with a nursery write, and reads.  No collection runs.  The nursery
 /// steps carry the nursery's frame and shape (`nursery_alloc_frame`,
 /// `nursery_store_frame`, with `GenInv.minor_heap_shape`), which are shown
 /// here for these concrete nurseries: every word is an object's header or

@@ -2,8 +2,8 @@
 /// GC.Gen.Run.Invariant - what every state of a run carries
 /// ---------------------------------------------------------------------------
 ///
-/// `run_invariant r h` = `phase_shape r` /\ `snapshot_accounting r h`
-/// (mutator-equivalence-plan.md, section 3.3).  Every step keeps it
+/// `run_invariant r h` = `phase_shape r` /\ `snapshot_accounting r h`.
+/// Every step keeps it
 /// (`step_keeps_run_invariant`, one lemma per kind of step), so by induction
 /// it holds at every state of a run (`run_invariant_along`).  Nothing happens
 /// between steps: every change is a step.

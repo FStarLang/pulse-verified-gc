@@ -54,8 +54,8 @@ val slice_keeps_idle (r: real_state) (h: cycle_history) (budget: nat) (r': real_
           (ensures run_invariant r' (update_history h r (Slice budget) r'))
 
 /// **A mark slice that stays marking keeps it.**  (The hand-over to the
-/// sweep, and the sweep's slices, are not covered: see the report on
-/// `GC.Gen.Run.Invariant.slice_keeps_run_invariant`.)
+/// sweep is `slice_keeps_handover`; the sweep's slices are
+/// `GC.Gen.Run.Invariant.SweepSlice.slice_keeps_sweeping`.)
 val slice_keeps_marking (r: real_state) (h: cycle_history) (budget: nat) (r': real_state)
   : Lemma (requires run_invariant r h /\ step r (Slice budget) r' /\
                     r.phase == Ph.Marking /\ r'.phase == Ph.Marking)

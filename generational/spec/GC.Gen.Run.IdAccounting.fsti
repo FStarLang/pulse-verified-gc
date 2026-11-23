@@ -3,8 +3,8 @@
 /// and the schedule alone
 /// ---------------------------------------------------------------------------
 ///
-/// The id-level accounting of a run (mutator-equivalence-plan.md, section 1,
-/// the hoisted-run corollary): which ideal objects have a block in the real
+/// The id-level accounting of a run (for the hoisted-run corollary,
+/// `GC.Gen.Run.Hoisted`): which ideal objects have a block in the real
 /// memory, computed from the program's events `ps` and the schedule's kinds
 /// `ks` (`GC.Gen.Run.Step.kinds`) -- no addresses, no colours, no free list.
 ///

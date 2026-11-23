@@ -32,7 +32,7 @@ let rec init_writes_keep (ms: minor_state) (oa: U64.t) (init: seq U64.t) (i: nat
     end
 #pop-options
 
-/// Since stage 0d the nursery steps carry their frames (`nursery_alloc_frame`,
+/// The nursery steps carry their frames (`nursery_alloc_frame`,
 /// `nursery_store_frame` of `GC.Gen.Run.Step`, trusted); the walk-level proof
 /// above (`init_writes_keep`, `GC.Gen.Run.NurseryFrame`) shows the objects
 /// part of them.

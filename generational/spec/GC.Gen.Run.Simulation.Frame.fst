@@ -9,8 +9,8 @@
 /// non-free block (the barrier's darkening while marking) changes nothing
 /// the program sees (`same_blocks`).  So every major write -- a raw no-scan
 /// store, or the barrier at any phase -- meets it
-/// (`major_write_keeps_given`).  (Nursery stores: to do, from the nursery
-/// step relation's frame.)
+/// (`major_write_keeps_given`).  (Nursery stores get theirs from the step
+/// relation, `nursery_store_frame`.)
 
 module GC.Gen.Run.Simulation.Frame
 

@@ -9,7 +9,7 @@
 /// `write_frame` (`GC.Gen.Run.Simulation.Program.write_represents`) or
 /// `alloc_frame` (`GC.Gen.Run.Simulation.Alloc.alloc_represents`).  The
 /// nursery's frames are the step relation's (`nursery_store_frame`,
-/// `nursery_alloc_frame`, stage 0d); the major heap's are proved
+/// `nursery_alloc_frame`); the major heap's are proved
 /// (`GC.Gen.Run.Simulation.Frame`, and `major_alloc_frame` below).
 
 module GC.Gen.Run.Simulation.Steps

@@ -177,7 +177,7 @@ let base_transfer (h: cycle_history) (m m': real_memory)
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// The invariant, split: the stage-0 clauses, and those stage 0b added
+/// The invariant, split into core clauses and extra ones (`inv_split`)
 /// ---------------------------------------------------------------------------
 
 /// The collector's state, the remembered set's shape, the walk.
@@ -194,7 +194,9 @@ let shape_extra (r: real_state) : prop =
   D.nursery_fields_valid r.memory.nursery /\
   (minor_objects r.memory.nursery == Seq.empty ==> Seq.length r.ref_table == 0)
 
-/// The phase's clause, as at stage 0 (but idle).
+/// The phase's core clause: snapshot at the beginning and black allocation
+/// while marking, the account mid-sweep (the cursor and idle clauses are in
+/// `blk_extra`).
 let phase_core (r: real_state) (h: cycle_history) : prop =
   let g = r.memory.major in
   match r.phase with
