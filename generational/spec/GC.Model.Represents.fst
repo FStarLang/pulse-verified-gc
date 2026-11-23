@@ -3,7 +3,7 @@
 /// ---------------------------------------------------------------------------
 ///
 /// The relation between the real execution (`GC.Gen.Run.Step`) and the
-/// ideal one (`GC.Model.Ideal`) (mutator-equivalence-plan.md, section 3.5).
+/// ideal one (`GC.Model.Ideal`).
 /// It lives with the generational spec because the real memory is the
 /// nursery and the major heap.
 ///

@@ -2,8 +2,7 @@
 /// GC.Gen.Run.Step - the real execution: its state, its events, its runs
 /// ---------------------------------------------------------------------------
 ///
-/// The real execution of the program on our runtime, one event at a time
-/// (mutator-equivalence-plan.md, sections 3.1 and 3.2).
+/// The real execution of the program on our runtime, one event at a time.
 ///
 ///   * **The state** (`real_state`): the memory -- the nursery and the major
 ///     heap -- and the collector's bookkeeping: the free list, the phase, the
@@ -233,8 +232,7 @@ let same_block (g g': heap) (x: obj_addr) : prop =
   (forall (i: nat). i < U64.v (wosize_of_object x g) ==>
      major_field g' x i == major_field g x i)
 
-/// **Direct major allocation, relational** (plan section 3.2, properties
-/// (1)-(4)): the new block is at some address `a` such that
+/// **Direct major allocation, relational** (properties (1)-(4)): the new block is at some address `a` such that
 ///   (1) its words were free memory;
 ///   (2) afterwards it is an allocated block of the requested tag and size,
 ///       with the initial fields, and the colour the phase gives it;

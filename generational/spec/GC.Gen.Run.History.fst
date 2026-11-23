@@ -2,8 +2,7 @@
 /// GC.Gen.Run.History - the major cycle's history along a run
 /// ---------------------------------------------------------------------------
 ///
-/// What the snapshot-at-the-beginning accounting is relative to
-/// (mutator-equivalence-plan.md, section 3.3): the memory and the roots at
+/// What the snapshot-at-the-beginning accounting is relative to: the memory and the roots at
 /// the last `start_cycle`, and the major-heap blocks allocated since --
 /// directly or by promotion (a promotion is an allocation).  It is a ghost
 /// function of the run (`update_history`, `history_along`), not part of the

@@ -5,7 +5,7 @@
 /// The ideal execution of an OCaml program: unlimited memory, no collector,
 /// every object ever allocated stays where it was put.  It is what the
 /// mutator-equivalence theorem (`GC.Gen.Run.Simulation`) compares the real
-/// execution against (mutator-equivalence-plan.md, section 3.4).
+/// execution against.
 ///
 ///   * **Values** (`value`): a machine word that is not a pointer to an
 ///     object (`Word`: an OCaml int, a pointer to static data or code; that

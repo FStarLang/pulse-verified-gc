@@ -2,7 +2,7 @@
 /// GC.Gen.Run.Hoisted - the incremental run and its hoisted run
 /// ---------------------------------------------------------------------------
 ///
-/// The corollary of the simulation (mutator-equivalence-plan.md, section 1):
+/// The corollary of the simulation (`GC.Gen.Run.Simulation`):
 /// once the incremental collector is idle, the real memory is isomorphic,
 /// on every allocated block, to the memory of the hoisted run -- the same
 /// program with each cycle's slices moved to right after its start.

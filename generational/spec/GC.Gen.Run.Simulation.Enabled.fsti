@@ -10,9 +10,9 @@
 /// `represents`, the value being usable, and the trusted layout of the
 /// event's words (`GC.Model.Represents.word_layout`).  An infix pointer is
 /// resolved through its infix header, which `GC.Model.Ideal.valid_value`
-/// makes name the offset, of at least two words (stage 0e) -- what the real
-/// heap's `infix_addr_conds` asks.  Mid-sweep, a kept block is not pending
-/// free: stage 0b's sweeping clause (`kept_not_pending_holds`).
+/// makes name the offset, of at least two words -- what the real heap's
+/// `infix_addr_conds` asks.  Mid-sweep, a kept block is not pending free:
+/// the run invariant's sweeping clause (`kept_not_pending_holds`).
 
 module GC.Gen.Run.Simulation.Enabled
 
@@ -48,7 +48,7 @@ let nursery_after_store (r: real_state) (o: U64.t) (i: nat) (v: U64.t) : minor_s
   let ms = r.memory.nursery in
   { ms with data = minor_write_word_t ms.data (nursery_slot o i) v }
 
-/// **What stage 0d's nursery steps trust**, which a well-formed program does
+/// **What the nursery steps trust**, which a well-formed program does
 /// not give: the nursery after the step has the frame -- in particular its
 /// shape, `GenInv.minor_heap_shape`, the trusted mutator obligation.  A
 /// hypothesis of `GC.Gen.Run.Simulation.program_step_enabled`: the nursery
@@ -98,7 +98,7 @@ val usable_storable (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids
                     I.usable im v /\ value_rep ids v w /\ word_layout ids v w)
           (ensures storable_value r w /\ in_kept r h w)
 
-/// **`GC.Gen.Run.Simulation.program_step_enabled`, given what stage 0d's
+/// **`GC.Gen.Run.Simulation.program_step_enabled`, given what the
 /// nursery steps trust (`nursery_trusted`).**
 val program_step_enabled_given (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (e: event) (pe: I.program_event)
