@@ -2600,3 +2600,244 @@ modules that depend on them, spec and Impl, were rechecked at each seed
 with the repository's flags (`--retry 3` for modules that are not mine, as
 in the build).  All 139 are clean at seeds 0, 1 and 2.  The one warning is
 the existing warning 328 in `Pages.SweepAll`.
+
+---
+
+## 16. Plan: proving `gc_correct` and `gc_correct_local` (design only)
+
+This section plans the proof of the top-level theorem as it stands in
+`GC.Spec.Top.Run` (`conclusions`, clauses (0)–(6) and the read clause)
+over the interfaces of `GC.Spec.Top.Iface`.  No proof module is changed by
+it.  It was written by checking each clause against the contracts, as §7.7
+did; that check found six places where the statement cannot be proved as
+it stands (§16.2).
+
+### 16.1 Shape of the proof
+
+**One proof, for the incremental style.**  `style_ok Incremental` is `True`
+and `conclusions` does not mention the style, so `run_ok c Sequential ⇒
+run_ok c Incremental` and the sequential theorem is a corollary
+(`seq_of_inc`, a few lines).  A separate sequential proof would skip only
+the barrier's darkening and allocation while marking; it would still need
+minor collections inside the cycle with a non-empty nursery (young objects
+allocated while idle survive into the cycle), so it is not worth having.
+
+**`gc_correct_local` first.**  `gc_correct_local_implies` is proved, so the
+work is `gc_correct_local`, once G48 (§16.2) is fixed.  Until it is,
+`gc_correct` is proved from a core lemma whose hypotheses are `run_hyps`
+plus one extra fact that `allocator_ok` supplies.
+
+**Induction over the run.**  A run invariant `rinv x` is carried by
+induction on `i` (`RunFacts.at_succ`).  Each event gets one step lemma:
+`rinv x ∧ hyps_at c x e ∧ enabled ∧ mutator_ok ⇒ rinv x' ∧ concl_step x e x'`.
+`concl_point` follows from `rinv`.  The cycle clauses (3a), (3b), (4) and
+(3c) need a second induction over the indices of a cycle, with the start
+configuration fixed (§16.5).
+
+**Views.**  Every conclusion reads `vw x`, a world chosen by indefinite
+description, and every contract hands back *some* model of the new heap.
+The proof first shows that all the predicates involved are invariant under
+`agree` (same blocks, headers and fields; `Rep.repr_agree`), so the choice
+never matters.  `resolve` is: an infix header that resolves lies in a
+closure's field, a field word.
+
+### 16.2 Clauses that cannot be proved as stated
+
+Each is a missing guarantee: some component that meets its contract, or
+some run, makes the clause false.  Each fix is small and keeps the existing
+instances' proofs in substance.
+
+| # | Where | Why it fails | Proposed fix |
+|---|---|---|---|
+| G46 | (1b), (5) and every later point, through `minor_pre`'s `rem_covers` | `rem_covers` asks for every old-to-young pointer **of every block in use**.  A minor collection while sweeping rewrites only `live_target` blocks (G37) and empties the remembered set.  A pending block (white, unswept, garbage) that got a young pointer while idle keeps it, its slot is no longer remembered, and the next minor collection before the sweep reaches it has no precondition: the component may return anything. Run: idle write of a young pointer into A; drop A; start; mark; hand over; minor; minor. | `rem_covers` over `live_target` blocks only.  The promotion rewrites exactly those, and they are the only ones the program can reach.  Pages and first-fit already rewrite their own "in use" (`tal` in use), which is `live_target`; the change touches `PagesDone`/`FFDone`'s coverage step and `FFWInv.mpre_d`. |
+| G47 | (1b) `reachable ⊆ kept`, (3c), T1 | `ERead` pushes field `i` as a root, also for a **no-scan** block.  No-scan fields hold any bytes, and the byte representation decodes words by their bits (`Abs.absv`), so a string can read as `VPtr (Major a)` with `a` free or garbage.  It becomes a root, so reachable, but it is not kept. | `mutator_ok` for `ERead` asks `scannable (tag_of …)`; a byte read is not a root (OCaml boxes a float it reads, and an int is not a pointer).  If byte reads should be observable for T1, add an event that records the value outside the roots.  The witness runs read only A (scannable), so they are unchanged. |
+| G48 | `gc_correct_local` only: (2) "o is in use after", (5) at the last point | After `EAlloc`, the Fill changes the concrete heap.  "o is in use" needs `free_hd_at` at the **new** state `st'`.  `run_hyps` gives `free_hd_at` only at the states before each event, so after the run's last allocation nothing says the Fill kept o in use. | `hyps_at` for `EAlloc` also asks `forall h. free_hd_at r a st' h' h` at the allocator's result, or `run_hyps` asks the point hypotheses at `i ≤ length es`.  `hyps_of_ok` still proves it. |
+| G49 | `inv` at every point (1b), after `EWrite` | `write_post` fixes the words that are fields; `inv_frame_rel` compares **every** word.  With a representation whose model is the heap itself (faithful, not canonical), a barrier may change a header word's body, and an allocator's `inv` may read it.  Both meet their contracts, and `inv` is lost. | `write_post`: every word other than `o+1+i` is unchanged (or `inv_frame_rel` compares field words only).  The byte barrier works on `cabs`, which is canonical, so this costs one lemma there and in the toy barrier. |
+| G50 | `inv` (1b), (5), after `EStart` and `ESlice` | `mark_start_post` and `mark_slice_post` give `colours_only` and the tricolour invariant.  They allow any colour change of a block outside `snap ∪ allocd`, for example garbage white → blue.  `inv_frame_rel` allows only darkening of blocks in use.  For pages and first-fit, blue *is* free, so a block would leave use without the sweep, which breaks (5). | Both posts add "darken only": a block whose colour changes becomes grey or black.  akhil's mark, `ByteMark` and the toy mark only darken. |
+| G51 | T1 only (not a clause) | (0)–(6) say nothing of young objects' contents across steps, or of a promoted copy's fields; the read clause gives the read, but nothing ties a copy to the object it replaces.  T1 needs both. | Prove T1 from the run invariant, which has the contracts (§16.7).  Optionally add a clause: at `Done`, each copy holds the forwarded young fields (it is in `minor_post_done`). |
+
+No other clause looked unprovable.  Two points were checked and are
+**fine**, because the argument is not obvious:
+- *Tricolour across allocation.*  A path from a grey block through white
+  ones could pass through a free block that allocation destroys.  It
+  cannot: grey is in `snap ∪ allocd`, and that set is `closed`, so every
+  white block on such a path is live and in use, and allocation leaves it
+  alone.
+- *`young_sound` while sweeping.*  A young object holding a pointer to a
+  block the sweep is about to free would break it.  It cannot happen: a
+  pointer stored before the cycle makes the target an `outside_ref` at the
+  start (so in `snap`, black); one stored during the cycle was reachable,
+  so kept.
+
+### 16.3 The run invariant
+
+`rinv x` is a conjunction of sealed parts (`opaque_to_smt`, one
+introduction and one elimination lemma each, as in `FFWInv` and the
+lessons of §14/§15).  Every part is stated on `vw x` and is
+`agree`-invariant.
+
+| Part | Content | Used for |
+|---|---|---|
+| R1 | `has_view x`, `well_formed`, `young_ok`, `c.a.inv x.ph x.w.cmaj x.ast` | (1b); every contract's precondition |
+| R2 | `kept ⇒ live_target`.  While sweeping: in use and swept ⇒ live; not live and in use ⇒ white | (1a) at `EMinor`, (5), (3b) |
+| R3 | `reachable ⊆ kept`; every pointer in a root or a pointer field of a kept block resolves (major: to a kept block; young: in the nursery); every major pointer in **any** young field resolves to a kept block | (1b), `young_sound`, `sound_value` for Fill and writes |
+| R4 | Every young pointer in a field of a `live_target` block or of a young block resolves; `young_follow_ok`; `rem_covers` over `live_target` (G46) | `minor_pre`; no dangling pointer after the reset |
+| R5 | Colours. Idle: no dark block. Marking: `tricolour (snap) (allocd)`, `closed (snap ∪ allocd)`, `snap ∪ allocd` in use. Sweeping: no grey block, a live unswept block is black | `mark_start_pre`, `mark_slice_pre`, `dark_closed` and `no_grey` at the hand-over, the sweep's preconditions |
+| R6 | `snap ⊆ in use` at the start; `allocd` in use | (3b), (6) |
+
+`partition` (5) is derived from R1, R2 and R6 and tiling: each word is
+covered by exactly one block; a block is free or in use; in use is kept or
+pending by R2.
+
+### 16.4 Clause by clause
+
+Sizes are new lines of F*; risk is the chance that the step needs a
+reformulation or a long fight with the solver.
+
+| Clause | Strategy | Invariants | Lemmas needed | Reused | Size | Risk |
+|---|---|---|---|---|---|---|
+| (0) | `init_at` at `n` (`run_ok` gives `size_ok`), `yinit_ok`; agree to `vw` | — | `init_view` | `RunFacts.at_zero`, `Rep.repr_agree` | 60 | low |
+| (1a) | per event: `alloc_post` (`same_block`) + Fill disjoint from in-use words; `write_post`; `colours_only`; sweep post (black → white, same contents; outside the region unchanged); minor post on `live_target` (R2) | R1, R2 | `fill_disjoint`, `kept_live_target` | `FFWInv` step patterns (`*_use_g`) | 350 | low |
+| (1b) | R1–R6 carried by the step lemmas; `concl_point` read off | all | one step lemma per event family (§16.6) | `ToyComps.reach_within`/`not_reachable` (reachability stays in a closed set); `RunFacts` `*_wheq` lemmas, restated for `agree` | 2200 | **high**: minor (G46), write (tricolour) |
+| (2) | `alloc_post` + `binit_m` + `free_hd` at `st'` (G48) | R1, R3 (Fill values are `sound_value`) | `alloc_step_ok` | `FFWInv.inv_alloc`/`post_fill` shape | 250 | low |
+| read | `faithful_major`/`faithful_young` `reads_model`; `mutator_ok` gives block and index | — | `read_ok` | — | 40 | low |
+| (3a) | per-word induction from `s`: a word of a dead object is in that object (pending, header unchanged), or free, or covered by an allocated block in use | R2, R5, R6 | `dead_word_step` per event | pattern of `Pages.Cycle.cycle_lossless` / `words` (structure only) | 400 | medium |
+| (3b) | ⇐: kept persists (1a); ⇒: at done nothing in use is unswept (`sweep_done`), swept in-use blocks are live (R2) | R2, R6 | `survivors` | `Pages.Cycle.cycle_survives` (structure) | 150 | low |
+| (3c) | o unreachable at t: if not live in cycle k it is pending, freed by `j1`; if live, either it leaves use, or it stays in use and stays unreachable (no event adds an edge to an unreachable block: values are reachable now) and is pending in cycle k+1 | R3, plus (3a)/(4) | `unreachable_stays` (reach_within with the set "reachable now ∪ new"), `pending_freed` | `ToyComps.not_reachable` | 400 | medium (needs G47) |
+| (3d) | `minor_post_done`'s first clause on `vw x` | R4 (`minor_pre`) | — | — | 30 | low |
+| (4) | ⇐: not reachable at `s` ⇒ not in `snap` ⇒ pending ⇒ freed by its sweep step; ⇒: reachable at `s` ⇒ kept to `j+1` | R2, R6, (3a) induction | `freed_iff` | `Pages.Cycle.cycle_addresses_lossless` (structure) | 200 | low |
+| (5) | partition from tiling + R2; moves: per event, from the posts (`inv_frame_m` gives `free` unchanged for write/mark; alloc/minor only add; sweep only frees) | R1, R2 | `word_xor` (free word xor in-use word, from tiling), per-event move lemmas | `PagesAllocOk` generic word lemmas (already allocator-free) | 400 | medium (needs G50, G49) |
+| (6) | slice: contract; other events while marking: allocation and copies are black (`colour_at`), the barrier only greys a live white block, the rest keep colours; sweeping: contract, and `step` keeps `p` | R5, R6 | `no_increase_*` per event | — | 250 | low |
+
+### 16.5 The cycle clauses
+
+`concl_cycle` and `concl_two_cycles` are about indices of the run, not one
+configuration.  They are proved by a second induction from `s` to `j`
+with `x0 = at s` fixed, carrying the per-object statement
+`dead_or_reused x0 x o`: o is in use at `s` and not in the snapshot, and
+either o is pending with its header from `x0`, or each word of o in `x0` is
+free or covered by an allocated block in use.  (3c) applies (3a)/(4) to the
+two cycles and the "stays unreachable" lemma to the stretch between them.
+
+### 16.6 Modules, order, and estimates
+
+| # | Module (new) | Content | Lines | Risk |
+|---|---|---|---|---|
+| 0 | spec fixes in `Iface`, `Run` | G46, G47, G48, G49, G50; re-proofs in `ByteBarrier`, `ByteMark`, `ToyMark`, `ToyMinor`, `PagesDone`/`FFDone` (coverage step), `Broken`, `FFWInv.mpre_d`; recheck of every `GC.Spec.Top` module at 3 seeds | ±400 changed | medium: the minor chain is long (~2900 lines per instance), but only its use of `rem_covers` moves |
+| 1 | `Top.Views` | `agree`-invariance of `resolve`, `reach`, `yreach`, `mlive`, `in_use`, `covers`, `kept`, `partition`; choice lemmas for `vw` | 400 | low |
+| 2 | `Top.RInv` | R1–R6, sealed; `init` (0) | 300 | low |
+| 3 | `Top.Words` | tiling ⇒ word xor; `fill_disjoint`; partition from R1/R2/R6 | 300 | low |
+| 4 | `Top.StepMut` | `ERead`, `ERoots`, `EYoungAlloc`, `EWrite (Young)`; read clause | 350 | low |
+| 5 | `Top.StepSweep` | `EHandover` (`dark_closed` from tricolour + no grey), `ESweep`, `EEnd` | 450 | medium |
+| 6 | `Top.StepMark` | `EStart` (`mark_start_pre` from R5/`free_white`), `ESlice`; `inv_frame_rel` from darken-only | 400 | medium |
+| 7 | `Top.StepAlloc` | `EAlloc`: (2), tricolour and closed with a new black block | 500 | medium |
+| 8 | `Top.StepWrite` | `EWrite (Major)`: barrier, `wpath` surgery for the cut edge, closed, `rem_covers` | 600 | **high** |
+| 9 | `Top.StepMinor` | `EMinor`: `minor_pre` from R1–R4; reachability after the reset (old young refs gone, copies new); R4 re-established (no young pointer left in a `live_target` block); tricolour with black copies | 700 | **high** |
+| 10 | `Top.Point` | `concl_point`, `concl_step` assembled from 4–9 | 200 | low |
+| 11 | `Top.Cycle` | (3a), (3b), (4) | 700 | medium |
+| 12 | `Top.TwoCycles` | (3c) | 400 | medium |
+| 13 | `Top.Correct` | `gc_correct_local`, `gc_correct`, `seq_of_inc`; corollaries for `tc`, pages (`pc`), first-fit (`fc`) | 150 | low |
+| 14 | `Top.Stw` | T2 (§16.7) | 400 | medium |
+| 15 | `Top.Transparent` | T1 (§16.7) | 700 | **high** (statement) |
+
+**Order.**  0, then 1–3, then the step lemmas from the easy ones to the
+hard ones (4, 5, 6, 7, 8, 9), each with its own clauses of `concl_step`,
+then 10, 11, 12, 13.  T2 (14) needs only (4) and the measures; T1 (15)
+needs the invariant and comes last.  Steps 8 and 9 are independent of each
+other and of 11–12 once 1–3 exist.
+
+**Totals.**  About 6 500 new lines and about 400 changed, roughly the size
+of the first-fit instance (stage 2c).  Checking: the new modules are
+small-context by design; the full 3-seed sweep of `GC.Spec.Top` after the
+spec fixes is the long part (several hours of machine time, as in §13.6
+and §15.6).
+
+**Risks, and what limits them.**
+- Quantifier load in R1–R6: seal each part, one elimination lemma per use
+  (§14, lessons of `FFWInv`).
+- `vw`'s choice: every lemma is about an arbitrary view that agrees; module
+  1 isolates it.
+- Minor step (9): the argument that no young pointer survives in a
+  `live_target` block needs R4 to say "resolves", which needs every stored
+  young value to have resolved (`value_ok`) and the nursery to change only
+  by allocation in free space (`young_free`).  Both are in the contracts.
+- Barrier step (8): the Yuasa argument on `wpath` is the one new
+  graph-theoretic proof; `ToyMark.slice_path` is the nearest existing
+  induction over `wpath`.
+
+### 16.7 T1 and T2
+
+Neither is defined in the specification yet; this is how each would be
+stated and proved.
+
+**T2: equivalence with stop-the-world at the cycle's start.**  For a cycle
+`s..j` of a run, let `stw` be the run that stops at `s` and completes a
+cycle with no other event: `EStart`, slices until `mark_done`,
+`EHandover`, sweep steps until `done`, `EEnd`.
+1. *It exists.*  (6) gives finite measures: a slice strictly decreases the
+   white-then-grey live sets, and a sweep step strictly shrinks the
+   unswept blocks below `size`.  A sweep that is not done always has an
+   unswept block below `size`: otherwise `sweep_step_at`'s post (a region
+   below `size`) could not hold.  So well-founded induction builds the
+   event list.  This needs the contracts at those steps: from
+   `components_ok` (`hyps_of_ok`).  Under `gc_correct_local` it is a
+   hypothesis on the stop-the-world run.
+2. *It frees the same objects.*  Apply (4) to both runs, which share the
+   prefix up to `s`: each frees exactly `stw_freed (at s)`.
+3. *Survivors.*  By (3b), the incremental run keeps `snap ∪ allocd` and
+   the stop-the-world run keeps `snap` (`allocd` is empty: no allocation,
+   and no minor collection, inside it).  The difference is exactly the
+   floating garbage of kind (ii), §2.3; (3a) gives the word-level form.
+Size about 400 lines, medium risk (the list construction under the
+measure).
+
+**T1: transparency.**  The collector is invisible to the program: every
+read returns what it would return in a run without collection.
+- *Statement.*  A reference semantics runs the mutator events on an
+  unbounded store of objects named by allocation order, and ignores the
+  collector events.  T1 says there is, at every point `i`, an injective
+  map `ι_i` from the reference objects reachable at `i` to blocks
+  (major or young).  Roots correspond through `ι_i`, the fields of every
+  reachable object correspond (pointers through `ι_i`, with infix offsets
+  kept, as `fwdv` keeps them), and every `ERead` returns the image of the
+  reference read.  Allocation failures (`NoRoom`, `OutOfRoom`) are
+  observable, so T1 is stated for runs where they do not happen, or the
+  reference semantics fails at the same allocation.
+- *Proof.*  A simulation along the run.  `ι` changes only at `EMinor`
+  (composed with `fwd`) and at allocations (extended).  The invariant
+  needs the contents of kept blocks ((1a)), of new blocks ((2)), of young
+  objects (the `yrepr` contracts) and of copies (`minor_post_done`).  The
+  last two are not in (0)–(6) (G51), so T1 is proved from the run
+  invariant, not as a corollary of `conclusions`.  Reachable ⊆ kept (R3)
+  keeps the domain of `ι` alive.  G47 must be fixed first: otherwise a byte
+  read can name an object that is not in `ι`'s image.
+- Size about 700 lines.  The risk is in the statement (choosing the
+  reference semantics so it is obviously right), not in the proof.
+
+### 16.8 What is reused, and what is not
+
+- **The witness modules.**  `RunFacts` (`at_succ`, `exec_append`,
+  `run_hyps_of_ok`, the `*_wheq` reachability lemmas) is used directly.
+  `FFWInv`'s generic helpers (`frame_use_g`, `sweep_use_g`, `done_use_g`,
+  `rel_g`) are the pattern for the allocator's invariant in every step
+  lemma; they should move to a generic module.  After the proof, the
+  witness runs give concrete instances of every conclusion: for example
+  (3d) at event 12 of `FFWInc` must agree with `promoted_12`.  They must be
+  rechecked after the spec fixes (G46, G48 and G50 change hypotheses they
+  prove).
+- **The page incremental-cycle theorems** (`Pages.Cycle`, `.Carried`,
+  `.Sweep`, `.Write`): byte-level and page-specific, stated over the page
+  state, not over the interfaces.  They cannot be applied to the generic
+  proof.  What carries over is their structure: the account `ccycle_inv`
+  is R2/R6 with the partition, `cycle_survives` is (3b),
+  `cycle_addresses_lossless` is (4), `cycle_lossless`/`words` is (3a), and
+  `Cycle.Write.barrier_mark_inv` is the write step's SATB argument.  After
+  the proof, they are corollaries of `gc_correct` for the page instance up
+  to G17's abstraction, which is a useful cross-check.
+- **akhil's lemmas.**  None is needed by the generic proof: it is over the
+  model, and his lemmas are already used, read-only, inside the instances'
+  contract proofs (stages 2b and 2c).  They stay untouched.
+- **The toy.**  `ToyComps.reach_within`/`not_reachable` (reachability stays
+  inside a closed set holding the outside refs) is the tool for R3 and
+  (3c); `ToyMark.slice_path` is the nearest existing induction over
+  `wpath`.
