@@ -2182,3 +2182,237 @@ each seed's cache at the three seeds, clean.
   `Promote.Loop`, `Promote.Collect`, `Promote.Idle`, `PromoteInst`;
   `GC.Spec.Top.PagesDone2` (`cov_one`, `cov_all`); `Makefile`
   (`FFComps` added to `ROOT_MODULES`); this document (§13).
+
+## 14. Witness runs: the first-fit collector
+
+The user's request (2026-11-23): witness runs for both instances, in both
+styles, each from a heap built through the allocator, with roots, reachable
+and unreachable objects, and every event: allocation with Fill, a young
+allocation, writes through the barrier (one that darkens), a read, a root
+change, mark slices, sweep steps, minor collections in every phase, a young
+field holding an infix pointer into an old closure and one holding an
+integer that reads as an infix header; every hypothesis shown to hold;
+`gc_correct` not proved.  First-fit first, then pages.
+
+This section covers first-fit: both runs are built and checked.  The
+pages runs are not built yet (§14.7).
+
+### 14.1 Why the runs are symbolic, and the hypothesis
+
+Normalisation, as the toy runs use it (`assert_nbe`), cannot compute these
+runs: the configuration is abstract.
+
+- `heap_size` and `zero_addr` are `val`s of `GC.Spec.ZeroAddr`, supplied at
+  link time.  This holds for both instances.
+- The nursery's size (`GC.Gen.Base.minor_heap_size`) is abstract too.  So is
+  the largest young object (`max_young_wosize`), known only to be at least 1.
+- The page parameters are abstract (`GC.Spec.Pages.Params`), for pages only.
+
+So the runs are symbolic.  Every heap of a run is a closed form relative to
+`msize`, and every step is a lemma.  The runs hold under one explicit
+hypothesis, a `requires` on every witness lemma (never an `assume`), in the
+style of the page witness's `big_enough`:
+
+- **`FFWState.ff_room`**: `32 <= msize /\ 4 <= ywords`.  That is room in the
+  major heap for the objects the runs allocate (16 words below its top, plus
+  the free block), and room in the nursery for two one-field objects.
+
+The real configuration meets it by orders of magnitude.  The extracted
+defaults set `minor_heap_size_u64` to 2048 bytes (`ywords` = 256).  The OCaml
+integration sizes the nursery from OCaml's minor heap and allocates the
+major heap with `calloc` (`zero_addr` = its base, `heap_size_u64` = its end),
+thousands of words.  Since `max_young_wosize >= 1` is all that is known, each
+young object of the runs has one field.
+
+### 14.2 Method: exact model heaps in closed form
+
+At every step the run tracks a description `FFWStep.holds x d`.  It says the
+configuration is not stopped, gives its phase, says the free list's head is
+the bottom block, gives the model heap `FFWState.mk st` that the byte heap
+represents (`brepr`), the nursery and the model nursery it represents, the
+roots, and an empty remembered set.  `wd d` is then a world that represents
+the configuration, and every world that does has the same reading
+(`views_wd`).  So `vw x`, the world `run_ok` reads, has the same reachable
+blocks and values (`RunFacts.wheq`, `mutator_wheq`).
+
+`mk st` is a closed form over a small record: the free block's size, each
+block's colour (`None` before it is allocated), the fields the program
+writes, and the free block's link.  First-fit places each block at the top
+of the free block at 0, so the blocks sit at fixed distances below the top
+of the heap:
+
+| block | model address | fields |
+|---|---|---|
+| A | `msize - 3` | 2 |
+| B | `msize - 5` | 1 |
+| C | `msize - 7` | 1 |
+| K | `msize - 11` | 3; a closure (tag 247) whose second field is `infix_word 2` |
+| D | `msize - 13` | 1 (incremental run only) |
+| E | `msize - 15` | 1 (incremental run only) |
+
+Each event is one lemma per kind of event (`FFWStep.step_*`).  Each turns the
+component on the byte heap into a model update, given as a hypothesis the
+equation between closed forms that each run proves (`FFWOps`, `FFWMark`).
+
+- **Allocation with Fill**: akhil's search takes the head and splits it,
+  right-justified (`FFWAlloc.ffalloc_head`, via `alloc_search_found_head`
+  and `alloc_from_block_split_normal`).  The model is `FFWAlloc.split`, then
+  the Fill (`ByteBarrier.binit_from_ok`).  The new block's colour is the
+  colour rule at its address.
+- **Writes**: `ByteBarrier.bwrite_cabs`, with the darkening (`tdark`).
+- **The mark's start and slices**: `ByteMark.bstart_cabs` and
+  `scan_obj_cabs` at the lowest grey block (`find_grey_low`), in closed
+  form (`FFWMark.start_seq`, `start_inc`, `slice_A`, `slice_B`, `slice_K`).
+- **Sweep steps** (`FFWSweep`), from akhil's step at the derived state
+  (`state_at`).  The bottom free block is left alone (`sweep_head`).  A black
+  block is whitened (`sweep_black`).  Garbage not after a free block is freed
+  and linked after the bottom block (`sweep_white`: `last_cell_behind` is
+  the bottom block, `frag_at` is 0).
+- **Minor collections on the empty nursery** (`FFWMinor0.pcollect_empty`).
+  The promotion forwards nothing.  akhil's pointer update with the empty map
+  writes nothing (`update_object_pointers`, `update_walk_aux` by induction).
+  The result is `Done`, with the same heap, free list and roots.  A reset
+  nursery is the initial one (`yreset_yinit`).
+- **Young allocation** (`Young.yalloc_repr`).  It is computed for the empty
+  nursery (Y1 at 0) and after it (Y2 at 2) (`FFWYoung`).
+
+A byte step that writes known words is the model update that changes those
+words.  `FFWWords.heq_of_words` / `words_of_heq` give that a canonical,
+representable model fixes every word from `zero_addr` on (`Abs.cword`), and
+`FFWModel.write1_repr` is one word written.  Representability is preserved by
+updates that keep the shape (`FFWModel.same_shape_ok`) and by the split
+(`FFWAlloc.split_ok`).
+
+### 14.3 The runs
+
+**Sequential** (`GC.Spec.Top.FFWSeq`, 25 events):
+
+| # | event | phase | what happens |
+|---|---|---|---|
+| 0-3 | `EAlloc` ×4 | idle | A `[1; 1]`, B `[1]`, C `[B]`, K `[1; infix_word 2; 1]` |
+| 4 | `EWrite A.0 := B` | idle | through the barrier |
+| 5 | `EWrite A.1 := K+2` | idle | an infix pointer into K |
+| 6 | `ERoots [A]` | idle | root change |
+| 7 | `ERead A.0` | idle | B read into a root: roots `[B; A]` |
+| 8 | `EStart` | idle | A, B grey; snapshot {A, B, K}; C unreachable |
+| 9 | `EMinor` | marking | empty nursery |
+| 10-12 | `ESlice` ×3 | marking | B; A (greys K through the infix pointer); K |
+| 13 | `EHandover` | marking | no grey |
+| 14 | `ESweep` | sweeping | the free block |
+| 15 | `EMinor` | sweeping | empty nursery |
+| 16-19 | `ESweep` ×4 | sweeping | K whitened; C freed (linked after the free block); B, A whitened |
+| 20 | `EEnd` | sweeping | the cursor at the end |
+| 21 | `EYoungAlloc [K+2]` | idle | Y1: an infix pointer into the old closure K |
+| 22 | `EYoungAlloc [infix_word 2]` | idle | Y2: an integer that reads as an infix header |
+| 23 | `ERoots [A; Y1; Y2]` | idle | root change |
+| 24 | `EMinor` | idle | Y1 and Y2 live |
+
+**Incremental** (`GC.Spec.Top.FFWInc`, 30 events):
+
+| # | event | phase | what happens |
+|---|---|---|---|
+| 0-6 | as sequential 0-6 | idle | same configurations (`same_prefix`) |
+| 7 | `EStart` | idle | A grey (roots `[A]`) |
+| 8 | `EAlloc [B]` | marking | D, black |
+| 9 | `EWrite A.0 := 1` | marking | the barrier darkens B, white to grey |
+| 10 | `EMinor` | marking | empty nursery |
+| 11-13 | `ESlice` ×3 | marking | B; A (greys K); K |
+| 14 | `EHandover` | marking | |
+| 15 | `ESweep` | sweeping | the free block |
+| 16 | `EAlloc [A]` | sweeping | E, white (behind the cursor) |
+| 17 | `EWrite D.0 := K+2` | sweeping | no darkening |
+| 18 | `EMinor` | sweeping | empty nursery |
+| 19-20 | `EYoungAlloc` ×2 | sweeping | Y1 (infix pointer into K), Y2 (`infix_word 2`) |
+| 21 | `ERoots [A; E; Y1; Y2]` | sweeping | D dropped |
+| 22-26 | `ESweep` ×5 | sweeping | D, K whitened; C freed; B, A whitened |
+| 27 | `EEnd` | sweeping | |
+| 28 | `ERead A.1` | idle | the infix pointer read into a root |
+| 29 | `EMinor` | idle | Y1 and Y2 live |
+
+### 14.4 What is proved
+
+Every statement below is under `ff_room` only.
+
+- `FFWSeq.ff_vacuity_sequential`: `components_ok fc` (stage 2c), `run_ok fc
+  Sequential msize ywords es_seq`, and `run_hyps fc msize ywords es_seq`.
+  These are every hypothesis of `gc_correct` and `gc_correct_local`.
+- `FFWInc.ff_vacuity_incremental`: the same for `Incremental` and `es_inc`.
+- `RunFacts.run_hyps_of_ok`: the contracts give `run_hyps` for every run of
+  every collector.
+- Non-triviality, on `vw` of the configuration:
+  - `seq_nontrivial` and `inc_nontrivial`: at the cycle's start, A is a root,
+    and A, B and K are reachable; K is reachable only through A's infix
+    pointer.  C is in use (not free for the allocator) and unreachable
+    (`FFWStart.c_unreachable`, a closure argument).
+  - `inc_darkens`: the write at 9 runs while marking, overwrites A.0 (B,
+    white), and B is grey after it.
+  - `inc_interleaves`: the program allocates and writes while marking (8, 9)
+    and allocates, writes, allocates young objects and changes the roots
+    while sweeping (16, 17, 19-21).
+  - Minor collections run in each phase: sequential 9, 15, 24
+    (`seq_minor_phases`); incremental 10, 18, 29.
+  - `seq_infix_cases` and `inc_infix_cases`: at the last minor collection,
+    Y1 and Y2 are young-reachable from the roots.  Y1's field is `K+2`, which
+    resolves to K, in use.  Y2's field is `infix_word 2`, which `infix_hdr`
+    reads as an infix header.
+  - `every_event` holds of both runs.
+
+### 14.5 What the runs do not show
+
+- **Sequential style and the barrier's darkening.**  In the sequential
+  style the program runs only while idle (`style_ok`), so a write never
+  happens while marking and the barrier never darkens.  Only the
+  incremental run exercises the darkening.
+- **Minor collections while marking and while sweeping run on the empty
+  nursery.**  In the sequential style nothing is allocated young during a
+  cycle, so a nursery live while marking would also be live (and promoted)
+  then.  Copies placed while marking would land in front of the sweep's
+  cursor, and their layout would have to be computed exactly to count the
+  sweep's steps.
+  - The promotions with the infix cases are therefore the last event of
+    each run, in idle.  `run_ok` asks nothing of that collection's result.
+  - This stage does not compute the result (Done, the copies' places).
+    Nor does it prove the collection's model precondition (`minor_pre`) at
+    that point.
+  - Computing one promotion of a one-field young object is the next step
+    if a promoting collection inside a cycle is wanted.  It would unfold
+    `Promote.forward_roots`, `promote_object` (first-fit from the bottom
+    block, as `FFWAlloc`), `scan` and the empty pointer update.
+- **One allocation size per object, and no coalescing.**  The layout keeps
+  garbage away from free blocks, so the sweep's coalescing case (a free
+  block grown over the next one) is not exercised.
+
+### 14.6 Checking
+
+The new modules were checked in dependency order on each seed's cache from
+the stage-2c sweep, at Z3 seeds 0, 1 and 2, without `--retry`.  Each new
+module's `.checked` file was removed first; the modules they depend on are
+unchanged since that sweep.  Rlimits are at most 40, with no admits and no
+assumes.  Results are in §14.8.
+
+### 14.7 Pages: not built
+
+The pages runs need the same apparatus for the page allocator and the page
+sweep:
+- allocation into a pool page of a size class, or into a run of empty
+  pages, with abstract `page_wsize`, `n_cls` and `cls`;
+- the page sweep's units over a page or a run;
+- a closed form of the heap over pages.
+
+The witness `GC.Spec.Pages.Witness` (`big_enough`) gives the heap shape to
+start from, not the steps.  This is at least the size of the first-fit work
+(16 modules here) and is the next stage.
+
+### 14.8 Files and results
+
+- **New**: `GC.Spec.Top.FFWWords`, `FFWAlloc`, `FFWModel`, `FFWSweep`,
+  `FFWMinor0`, `RunFacts`, `FFWState`, `FFWStep`, `FFWRun`, `FFWOps`,
+  `FFWMark`, `FFWStart`, `FFWOk`, `FFWYoung`, `FFWSeq`, `FFWInc`.
+- **Changed**: `Makefile` (`FFWInc` added to `ROOT_MODULES`); this document
+  (§14).
+
+| Z3 seed | modules | errors | warnings | total time | slowest |
+|---|---|---|---|---|---|
+| 0 | 16 | 0 | 0 | 499 s | `FFWSeq`, 96 s |
+| 1 | 16 | 0 | 0 | 505 s | `FFWSeq`, 100 s |
+| 2 | 16 | 0 | 0 | 497 s | `FFWSeq`, 101 s |
