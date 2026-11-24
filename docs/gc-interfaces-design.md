@@ -3107,3 +3107,58 @@ The witness runs of `FFWSeq`/`FFWInc` (`ff_vacuity_sequential`,
 | `Correct` | 63 | 4 s | 3 s | 4 s |
 
 **Left.**  T1 and T2 (§16.7).
+
+### 16.14 T2: equivalence with stop-the-world at the cycle's start
+
+**Statement (`Top.Stw`, 70 lines, new).**  `stw_tail a b` is `EStart`,
+`a` slices, `EHandover`, `b` sweep steps, `EEnd`.  `stw_run es s es'`:
+`es' = take s es @ stw_tail a b` for some `a`, `b`.  `stw_equiv c n ny es
+s j es'`, with `j' = last es'` and `x0 = at es s`:
+- `is_cycle es' s j'`;
+- the runs agree up to `s`;
+- they free the same objects (`freed_in`);
+- the stop-the-world run keeps exactly `reachable (wv x0)`;
+- the incremental run keeps those and `allocd` at `j` (floating garbage
+  of kind (ii)).
+
+`t2 c sty`: under `components_ok c`, for every run `es` of style `sty`
+and every cycle `s..j` of it, some `es'` with `stw_run`, `run_ok c sty`
+and `stw_equiv`.  `t2_local c sty`: under `faithful c.r`, for runs `es`,
+`es'` with `run_ok` and `run_hyps` (the contracts at the steps of both),
+`stw_run` and a cycle `s..j` of `es`, `stw_equiv`.
+
+**Proof.**
+- `Top.RunApp` (140 lines): `es' = take s es @ tl` is `es` up to `s`
+  and `exec (at es s) tl` after; `tail_ok` (each step's `run_ok` and
+  `run_hyps` obligations) makes `es'` a run (`run_of_tail`).
+- `Top.StwBuild` (268 lines): `stw_build`.  From an idle configuration
+  with `rinv`, under the contracts, a whole cycle runs: slices while the
+  mark is not done, each strictly decreasing `mm` (white, then grey, live
+  objects below `size`, encoded as `white * (size+1) + grey`, from (6)'s
+  `mark_decreases`); then sweep steps while the sweep is not done, each
+  strictly decreasing the count of unswept addresses below `size` (from
+  (6)'s region below `size`).  The size is fixed (`cyc`).  Counting is
+  over props, with `strong_excluded_middle` (`cnt`).
+- `Top.T2` (202 lines): the cycle of `es'`; the stop-the-world run
+  allocates nothing (`stw_allocd`: slices, handover and sweep steps keep
+  `allocd`); each cycle keeps its snapshot (= reachable at `s`) and its
+  `allocd` ((3b), `keeps`); (4) on both runs, at the same `at s`.
+  `t2_local_ok`, `t2_ok`, `t2_both`: no `requires`.
+
+**No new gap.**  Nothing existing changed except the build roots
+(`Top.Correct` and `Top.T2` added to `ROOT_MODULES`).
+
+**Checking** (from removed `.checked` files, no `--retry`):
+
+| Module | lines | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|---|
+| `Stw` | 70 | 2 s | 2 s | 2 s |
+| `RunApp` | 140 | 32 s | 15 s | 9 s |
+| `StwBuild` | 268 | 33 s | 30 s | 31 s |
+| `T2` | 202 | 34 s | 33 s | 34 s |
+
+**The build.**  `Top.Correct` was not reachable from any root, so the
+proof was not checked by `gmake verify`; it and `Top.T2` are now in
+`ROOT_MODULES`.  `gmake -j6 verify` from an empty `_cache` in a scratch
+worktree (default `--retry 3`, as CI): 506 cache files, 373 modules
+verified, 0 errors, 59 min; then the four T2 modules on top, 32 s.
