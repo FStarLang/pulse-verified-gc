@@ -3010,3 +3010,65 @@ modules.  All are clean.  The slowest existing module is `FFWInc` (654 s,
 | `StepAlloc` | 632 | 122 s | 120 s | 114 s |
 | `StepWrite` | 498 | 58 s | 53 s | 56 s |
 | `StepMinor` | 754 | 27 s | 27 s | 27 s |
+
+### 16.12 Checkpoint C: every point and every cycle
+
+Proved, with no admit or assume, rlimits at most 40.
+
+| Module | Content |
+|---|---|
+| `Top.Point` | `step_ok`: one lemma for every event, dispatching to the step lemmas.  `rinv_at`: the invariant at every point of a run, by induction from `rinv_init`.  `points_ok`: clause (0), `concl_point` at every point ((1b), (5)), `concl_step` at every step ((1a), (2), the read clause, (3d), (5), (6)).  Hypotheses: `faithful`, `run_ok`, `run_hyps` (sealed as `run_pre`). |
+| `Top.Cycle` | `cycle_ok`: `concl_cycle` for every cycle `s..j` of such a run: (3a), (3b), (4). |
+
+**The cycle argument.**  Inside a cycle the snapshot is fixed and the phase
+is not idle (`in_cycle`); at its end the sweep is done, so a block in use
+is live (`done_live`).
+- (3b): in use at the end is live (`sweep_done` and R2), and live is in use
+  (R6).  The end changes only the phase.
+- (4): a snapshot object is live, so in use, throughout.  Conversely an
+  object in use throughout and outside the snapshot is never allocated in
+  the cycle (`never_allocd`: only blocks that were not in use are), so it
+  is not live at the end, though in use: impossible, so it is freed.
+- (3a): each word of such an object is, at every point, a word of the
+  pending object, a free word, or a word of a block allocated in the cycle
+  and in use (`word_ok`, `word_step`).  At the end the first is impossible.
+
+**Change to the step lemmas.**  `concl_step` does not say what the cycle
+argument needs of each step, so every step lemma now also proves `cyc`:
+- the heap's size stays fixed;
+- an allocated block was not in use before;
+- a block that comes into use is allocated;
+- a block that stays in use keeps its size;
+- a block that leaves use leaves its words free.
+
+It is a fifth sealed part of `step_out` (`cs_cyc`), moved to `vw x'` like
+the others.  Each step proves it from the facts it already had (alloc:
+`a_cyc`; sweep: `sw_cyc`, with the sweep post's "white becomes free";
+minor: `n_cyc`; the others with `cyc_same`/`cyc_agree`).
+
+**No new gap.**
+
+**Left.**  `Top.TwoCycles` ((3c)): from (4) at the second cycle and
+`rback` (an unreachable object in use stays unreachable), which every step
+lemma proves.  `Top.Correct`: `gc_correct_local` (from `points_ok`,
+`cycle_ok` and (3c)), `gc_correct` (by `gc_correct_local_implies`), for
+both styles (the style is never used).
+
+**Checking.**  The changed step modules and the two new modules, in
+dependency order from removed `.checked` files, without `--retry`.  No
+module outside the proof changed, so the 88 modules of §16.11 stand.
+
+| Module | lines | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|---|
+| `StepBase` | 446 | 4 s | 4 s | 4 s |
+| `StepMut` | 369 | 32 s | 32 s | 32 s |
+| `StepSweep` | 406 | 18 s | 18 s | 18 s |
+| `StepMark` | 324 | 45 s | 46 s | 44 s |
+| `StepAlloc` | 651 | 124 s | 118 s | 114 s |
+| `StepWrite` | 502 | 59 s | 59 s | 59 s |
+| `StepMinor` | 774 | 25 s | 25 s | 27 s |
+| `Point` | 112 | 4 s | 4 s | 3 s |
+| `Cycle` | 345 | 26 s | 28 s | 28 s |
+
+(`Views`, `Words`, `RInv`, `StepFacts` are unchanged and were rechecked in
+the same runs, 2-3 s each.)

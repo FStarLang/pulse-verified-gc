@@ -105,11 +105,30 @@ let rback_w (#c: comps) (x: config c) (w': world) : prop =
 let rback (#c: comps) (x x': config c) : prop =
   forall (o: nat). reachable (vw x') o /\ in_use_c x o == true ==> reachable (vw x) o
 
+/// What the cycle clauses (3a), (3b), (4) need of one step: an allocated
+/// block was not in use, a block that comes into use is allocated, a block
+/// that stays in use keeps its size, and a block that leaves use leaves its
+/// words free.
+[@@"opaque_to_smt"]
+let cs_cyc (#c: comps) (x x': config c) (w': world) : prop =
+  w'.maj.size == (mj x).size /\
+  (forall (p: nat). x'.allocd p ==> x.allocd p \/ in_use_c x p == false) /\
+  (forall (y: nat). iu x' w'.maj y == true /\ in_use_c x y == false ==> x'.allocd y) /\
+  (forall (o: nat). in_use_c x o == true /\ iu x' w'.maj o == true ==> wz_of w'.maj o == wz_of (mj x) o) /\
+  (forall (o n: nat). in_use_c x o == true /\ iu x' w'.maj o == false /\ covers (mj x) o n ==> free_w x' w' n)
+
+let cyc (#c: comps) (x x': config c) : prop =
+  (mj x').size == (mj x).size /\
+  (forall (p: nat). x'.allocd p ==> x.allocd p \/ in_use_c x p == false) /\
+  (forall (y: nat). in_use_c x' y == true /\ in_use_c x y == false ==> x'.allocd y) /\
+  (forall (o: nat). in_use_c x o == true /\ in_use_c x' o == true ==> wz_of (mj x') o == wz_of (mj x) o) /\
+  (forall (o n: nat). in_use_c x o == true /\ in_use_c x' o == false /\ covers (mj x) o n ==> free_word_c x' n)
+
 /// Everything a step lemma proves.
 let step_out (#c: comps) (x: config c) (e: event) (x': config c) (w': world) : prop =
   views x' w' /\ rinv_w x' w' /\
   cs_keep x e x' w' /\ cs_alloc x e x' w' /\ cs_old x e x' /\ cs_words x e x' w' /\ cs_mark x e x' w' /\
-  rback_w x w'
+  rback_w x w' /\ cs_cyc x x' w'
 
 /// ---------------------------------------------------------------------------
 /// To `vw x'`
@@ -200,17 +219,52 @@ let concl_of_cs (#c: comps) (x: config c) (e: event) (x': config c)
     C.forall_intro (C.move_requires (words_concl x e x'));
     mark_concl x e x'
 
+let ag_cyc1 (#c: comps) (x x': config c) (w1: world) (o: nat)
+  : Lemma (requires agree w1.maj (mj x') /\ cs_cyc x x' w1)
+          (ensures (x'.allocd o ==> x.allocd o \/ in_use_c x o == false) /\
+                   (in_use_c x' o == true /\ in_use_c x o == false ==> x'.allocd o) /\
+                   (in_use_c x o == true /\ in_use_c x' o == true ==> wz_of (mj x') o == wz_of (mj x) o) /\
+                   (forall (n: nat). in_use_c x o == true /\ in_use_c x' o == false /\ covers (mj x) o n ==>
+                      free_word_c x' n))
+  = reveal_opaque (`%cs_cyc) (cs_cyc #c);
+    ag_iu x' w1.maj (mj x') o;
+    ag_hd w1.maj (mj x') o;
+    C.forall_intro (fun (n: nat) -> ag_free_word c.a x'.ast x'.w.cmaj w1.maj (mj x') n)
+
+let ag_cyc (#c: comps) (x x': config c) (w1: world)
+  : Lemma (requires agree w1.maj (mj x') /\ cs_cyc x x' w1) (ensures cyc x x')
+  = C.forall_intro (ag_cyc1 x x' w1);
+    reveal_opaque (`%cs_cyc) (cs_cyc #c)
+
 /// **A step lemma's result, at `vw x'`.**
 let step_out_intro (#c: comps) (x: config c) (e: event) (x': config c) (w': world)
   : Lemma (requires faithful c.r /\ step_out x e x' w')
-          (ensures rinv x' /\ concl_step x e x' /\ rback x x')
+          (ensures rinv x' /\ concl_step x e x' /\ rback x x' /\ cyc x x')
   = vw_agree x' w';
     let w2 = vw x' in
     rinv_w_agree x' w' w2;
     ag_cs_keep x e x' w' w2; ag_cs_alloc x e x' w' w2; ag_cs_words x e x' w' w2; ag_cs_mark x e x' w' w2;
     concl_of_cs x e x';
     ag_rback x w' w2;
-    reveal_opaque (`%rback_w) (rback_w #c)
+    reveal_opaque (`%rback_w) (rback_w #c);
+    ag_cyc x x' w'
+
+/// `cs_cyc` for a step that allocates nothing and keeps what is in use, and
+/// the sizes of the blocks in use.
+let cyc_same (#c: comps) (x x': config c) (w': world)
+  : Lemma (requires (forall (p: nat). x'.allocd p ==> x.allocd p) /\ w'.maj.size == (mj x).size /\
+                    (forall (o: nat). iu x' w'.maj o == in_use_c x o) /\
+                    (forall (o: nat). in_use_c x o ==> wz_of w'.maj o == wz_of (mj x) o))
+          (ensures cs_cyc x x' w')
+  = reveal_opaque (`%cs_cyc) (cs_cyc #c)
+
+/// The same, when the model agrees with the old one.
+let cyc_agree (#c: comps) (x x': config c) (w': world)
+  : Lemma (requires (forall (p: nat). x'.allocd p ==> x.allocd p) /\ agree (mj x) w'.maj /\
+                    (forall (o: nat). c.a.free x'.ast x'.w.cmaj o == c.a.free x.ast x.w.cmaj o))
+          (ensures cs_cyc x x' w')
+  = C.forall_intro (fun (o: nat) -> ag_hd (mj x) w'.maj o);
+    cyc_same x x' w'
 
 /// ---------------------------------------------------------------------------
 /// Common cases

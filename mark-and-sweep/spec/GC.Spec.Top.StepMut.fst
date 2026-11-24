@@ -99,11 +99,12 @@ let mut_r_rest (#c: comps) (x x': config c) (w': world)
 let mut_step (#c: comps) (x: config c) (e: event) (x': config c) (w': world)
   : Lemma (requires faithful c.r /\ rinv x /\ mut_ok x x' w' /\ cs_old x e x' /\
                     (ERead? e \/ ERoots? e \/ EYoungAlloc? e \/ (EWrite? e /\ Young? (EWrite?.p e))))
-          (ensures rinv x' /\ concl_step x e x' /\ rback x x')
+          (ensures rinv x' /\ concl_step x e x' /\ rback x x' /\ cyc x x')
   = mut_r_reach x x' w'; mut_r_res x x' w'; mut_r_young x x' w'; mut_r_rest x x' w';
     reveal_opaque (`%r_heap) (r_heap #c);
     agree_refl (mj x);
     same_cs x e x' w';
+    cyc_agree x x' w';
     step_out_intro x e x' w'
 
 /// ---------------------------------------------------------------------------
@@ -168,7 +169,7 @@ let read_young (#c: comps) (x: config c) (o i: nat)
 #push-options "--z3rlimit 40"
 let read_major_step (#c: comps) (x: config c) (o i: nat)
   : Lemma (requires faithful c.r /\ rinv x /\ mutator_ok x (ERead (Major o) i))
-          (ensures (let x' = step c x (ERead (Major o) i) in rinv x' /\ concl_step x (ERead (Major o) i) x' /\ rback x x'))
+          (ensures (let x' = step c x (ERead (Major o) i) in rinv x' /\ concl_step x (ERead (Major o) i) x' /\ rback x x' /\ cyc x x'))
   = let e = ERead (Major o) i in
     let x' = step c x e in
     let w = vw x in
@@ -198,7 +199,7 @@ let read_major_step (#c: comps) (x: config c) (o i: nat)
 
 let read_young_step (#c: comps) (x: config c) (o i: nat)
   : Lemma (requires faithful c.r /\ rinv x /\ mutator_ok x (ERead (Young o) i))
-          (ensures (let x' = step c x (ERead (Young o) i) in rinv x' /\ concl_step x (ERead (Young o) i) x' /\ rback x x'))
+          (ensures (let x' = step c x (ERead (Young o) i) in rinv x' /\ concl_step x (ERead (Young o) i) x' /\ rback x x' /\ cyc x x'))
   = let e = ERead (Young o) i in
     let x' = step c x e in
     let w = vw x in
@@ -232,7 +233,7 @@ let read_young_step (#c: comps) (x: config c) (o i: nat)
 
 let roots_step (#c: comps) (x: config c) (rs: list value)
   : Lemma (requires faithful c.r /\ rinv x /\ mutator_ok x (ERoots rs))
-          (ensures (let x' = step c x (ERoots rs) in rinv x' /\ concl_step x (ERoots rs) x' /\ rback x x'))
+          (ensures (let x' = step c x (ERoots rs) in rinv x' /\ concl_step x (ERoots rs) x' /\ rback x x' /\ cyc x x'))
   = let e = ERoots rs in
     let x' = step c x e in
     let w = vw x in
@@ -290,7 +291,7 @@ let yalloc_step (#c: comps) (x: config c) (sz: size_t) (tag: tag_t) (vs: list va
   : Lemma (requires faithful c.r /\ rinv x /\ mutator_ok x (EYoungAlloc sz tag vs) /\
                     hyps_at c x (EYoungAlloc sz tag vs) /\ enabled c x (EYoungAlloc sz tag vs))
           (ensures (let e = EYoungAlloc sz tag vs in
-                    let x' = step c x e in rinv x' /\ concl_step x e x' /\ rback x x'))
+                    let x' = step c x e in rinv x' /\ concl_step x e x' /\ rback x x' /\ cyc x x'))
   = let e = EYoungAlloc sz tag vs in
     let x' = step c x e in
     let w = vw x in
@@ -339,7 +340,7 @@ let ywrite_step (#c: comps) (x: config c) (o i: nat) (v: value)
   : Lemma (requires faithful c.r /\ rinv x /\ mutator_ok x (EWrite (Young o) i v) /\
                     hyps_at c x (EWrite (Young o) i v))
           (ensures (let e = EWrite (Young o) i v in
-                    let x' = step c x e in rinv x' /\ concl_step x e x' /\ rback x x'))
+                    let x' = step c x e in rinv x' /\ concl_step x e x' /\ rback x x' /\ cyc x x'))
   = let e = EWrite (Young o) i v in
     let x' = step c x e in
     let w = vw x in

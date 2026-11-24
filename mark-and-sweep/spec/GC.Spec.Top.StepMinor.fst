@@ -686,23 +686,42 @@ let n_cs (#c: comps) (x x': config c) (hc': c.t) (st': c.a.state) (roots': list 
 /// EMinor
 /// ---------------------------------------------------------------------------
 
+let n_cyc1 (#c: comps) (x x': config c) (hc': c.t) (st': c.a.state) (roots': list value)
+    (fwd: nat -> option nat) (m': mheap) (y: nat)
+  : Lemma (requires mok x x' hc' st' roots' fwd m')
+          (ensures (x'.allocd y ==> x.allocd y \/ in_use_c x y == false) /\
+                   (iu x' m' y == true /\ in_use_c x y == false ==> x'.allocd y) /\
+                   (in_use_c x y == true ==> iu x' m' y == true /\ wz_of m' y == wz_of (mj x) y))
+  = n_iu x x' hc' st' roots' fwd m' y;
+    if FStar.IndefiniteDescription.strong_excluded_middle (is_copy fwd y) then
+      eliminate exists (q: nat). fwd q == Some y with n_copy x x' hc' st' roots' fwd m' q y;
+    if in_use_c x y then n_wf x x' hc' st' roots' fwd m'
+
+let n_cyc (#c: comps) (x x': config c) (hc': c.t) (st': c.a.state) (roots': list value)
+    (fwd: nat -> option nat) (m': mheap)
+  : Lemma (requires mok x x' hc' st' roots' fwd m') (ensures cs_cyc x x' (wnext x fwd m'))
+  = C.forall_intro (n_cyc1 x x' hc' st' roots' fwd m');
+    n_wf x x' hc' st' roots' fwd m';
+    reveal_opaque (`%cs_cyc) (cs_cyc #c)
+
 let n_finish (#c: comps) (x x': config c) (hc': c.t) (st': c.a.state) (roots': list value)
     (fwd: nat -> option nat) (m': mheap)
   : Lemma (requires faithful c.r /\ mok x x' hc' st' roots' fwd m' /\
                     c.n.collect x.ph x.ast x.w == Done hc' st' roots' fwd /\ views x' (wnext x fwd m'))
-          (ensures rinv x' /\ concl_step x EMinor x' /\ rback x x')
+          (ensures rinv x' /\ concl_step x EMinor x' /\ rback x x' /\ cyc x x')
   = n_r_heap x x' hc' st' roots' fwd m';
     n_r_reach x x' hc' st' roots' fwd m';
     n_r_res x x' hc' st' roots' fwd m';
     n_r_young x x' hc' st' roots' fwd m';
     n_r_col x x' hc' st' roots' fwd m';
     n_cs x x' hc' st' roots' fwd m';
+    n_cyc x x' hc' st' roots' fwd m';
     step_out_intro x EMinor x' (wnext x fwd m')
 
 /// Out of room: the run stops, nothing else changes.
 let oor_step (#c: comps) (x: config c)
   : Lemma (requires faithful c.r /\ rinv x /\ c.n.collect x.ph x.ast x.w == OutOfRoom)
-          (ensures (let x' = step c x EMinor in rinv x' /\ concl_step x EMinor x' /\ rback x x'))
+          (ensures (let x' = step c x EMinor in rinv x' /\ concl_step x EMinor x' /\ rback x x' /\ cyc x x'))
   = let x' = step c x EMinor in
     let w = vw x in
     vw_views x;
@@ -719,6 +738,7 @@ let oor_step (#c: comps) (x: config c)
     same_words x EMinor x' w;
     same_mark x EMinor x' w;
     reveal_opaque (`%rback_w) (rback_w #c);
+    cyc_agree x x' w;
     step_out_intro x EMinor x' w
 
 /// The configuration after a collection that succeeds.
@@ -733,7 +753,7 @@ let minor_next (#c: comps) (x: config c) (hc': c.t) (st': c.a.state) (roots': li
 #push-options "--z3rlimit 40"
 let minor_step (#c: comps) (x: config c)
   : Lemma (requires faithful c.r /\ rinv x /\ hyps_at c x EMinor)
-          (ensures (let x' = step c x EMinor in rinv x' /\ concl_step x EMinor x' /\ rback x x'))
+          (ensures (let x' = step c x EMinor in rinv x' /\ concl_step x EMinor x' /\ rback x x' /\ cyc x x'))
   = let x' = step c x EMinor in
     let w = vw x in
     vw_views x;

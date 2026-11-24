@@ -551,13 +551,30 @@ let a_cs_alloc (#c: comps) (x x': config c) (sz: size_t) (tag: tag_t) (vs: list 
     assert (alloc_w x sz tag vs x' w');
     reveal_opaque (`%cs_alloc) (cs_alloc #c)
 
+let a_cyc1 (#c: comps) (x x': config c) (sz: size_t) (tag: tag_t) (vs: list value) (h': c.t)
+    (st': c.a.state) (o: nat) (m': mheap) (h'': c.t) (rem': list slot) (y: nat)
+  : Lemma (requires aok x x' sz tag vs h' st' o m' h'' rem')
+          (ensures (x'.allocd y ==> x.allocd y \/ in_use_c x y == false) /\
+                   (iu x' (fill m' o vs) y == true /\ in_use_c x y == false ==> x'.allocd y) /\
+                   (in_use_c x y == true ==> iu x' (fill m' o vs) y == true /\ wz_of (fill m' o vs) y == wz_of (mj x) y))
+  = a_basic x x' sz tag vs h' st' o m' h'' rem';
+    a_iu x x' sz tag vs h' st' o m' h'' rem' y;
+    if in_use_c x y then a_keep x x' sz tag vs h' st' o m' h'' rem' y
+
+let a_cyc (#c: comps) (x x': config c) (sz: size_t) (tag: tag_t) (vs: list value) (h': c.t)
+    (st': c.a.state) (o: nat) (m': mheap) (h'': c.t) (rem': list slot)
+  : Lemma (requires aok x x' sz tag vs h' st' o m' h'' rem') (ensures cs_cyc x x' (wnext x vs o m' rem'))
+  = C.forall_intro (a_cyc1 x x' sz tag vs h' st' o m' h'' rem');
+    a_basic x x' sz tag vs h' st' o m' h'' rem';
+    reveal_opaque (`%cs_cyc) (cs_cyc #c)
+
 /// **A successful allocation.**
 let a_finish (#c: comps) (x x': config c) (sz: size_t) (tag: tag_t) (vs: list value) (h': c.t)
     (st': c.a.state) (o: nat) (m': mheap) (h'': c.t) (rem': list slot)
   : Lemma (requires faithful c.r /\ aok x x' sz tag vs h' st' o m' h'' rem' /\
                     c.a.alloc x.ph x.w.cmaj x.ast sz tag == (h', st', Ok o) /\
                     c.r.repr (fill m' o vs) h'' /\ views x' (wnext x vs o m' rem'))
-          (ensures rinv x' /\ concl_step x (EAlloc sz tag vs) x' /\ rback x x')
+          (ensures rinv x' /\ concl_step x (EAlloc sz tag vs) x' /\ rback x x' /\ cyc x x')
   = let e = EAlloc sz tag vs in
     let w' = wnext x vs o m' rem' in
     a_r_heap x x' sz tag vs h' st' o m' h'' rem';
@@ -570,6 +587,7 @@ let a_finish (#c: comps) (x x': config c) (sz: size_t) (tag: tag_t) (vs: list va
     a_cs_words x x' sz tag vs h' st' o m' h'' rem';
     a_cs_mark x x' sz tag vs h' st' o m' h'' rem';
     assert (cs_old x e x');
+    a_cyc x x' sz tag vs h' st' o m' h'' rem';
     step_out_intro x e x' w'
 
 /// ---------------------------------------------------------------------------
@@ -582,7 +600,7 @@ let noroom_step (#c: comps) (x: config c) (sz: size_t) (tag: tag_t) (vs: list va
                     (let (h', st', res) = c.a.alloc x.ph x.w.cmaj x.ast sz tag in
                      res == NoRoom /\ c.a.room x.ph x.ast x.w.cmaj sz == false))
           (ensures (let e = EAlloc sz tag vs in let x' = step c x e in
-                    rinv x' /\ concl_step x e x' /\ rback x x'))
+                    rinv x' /\ concl_step x e x' /\ rback x x' /\ cyc x x'))
   = let e = EAlloc sz tag vs in
     let x' = step c x e in
     assert (x' == x);
@@ -597,13 +615,14 @@ let noroom_step (#c: comps) (x: config c) (sz: size_t) (tag: tag_t) (vs: list va
     C.forall_intro (fun (o: nat) -> ag_white_live w.maj w.maj (live x) o);
     reveal_opaque (`%cs_mark) (cs_mark #c);
     reveal_opaque (`%rback_w) (rback_w #c);
+    cyc_agree x x w;
     step_out_intro x e x w
 
 #push-options "--z3rlimit 40"
 let alloc_step (#c: comps) (x: config c) (sz: size_t) (tag: tag_t) (vs: list value)
   : Lemma (requires faithful c.r /\ rinv x /\ hyps_at c x (EAlloc sz tag vs) /\ mutator_ok x (EAlloc sz tag vs))
           (ensures (let e = EAlloc sz tag vs in let x' = step c x e in
-                    rinv x' /\ concl_step x e x' /\ rback x x'))
+                    rinv x' /\ concl_step x e x' /\ rback x x' /\ cyc x x'))
   = let e = EAlloc sz tag vs in
     let x' = step c x e in
     let w = vw x in

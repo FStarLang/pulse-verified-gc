@@ -179,19 +179,20 @@ let st_cs (#c: comps) (x x': config c) (h': c.t) (m': mheap)
                     (forall (o: nat). c.a.free x.ast h' o == c.a.free x.ast x.w.cmaj o))
           (ensures (let w' = { vw x with maj = m' } in
                     cs_keep x EStart x' w' /\ cs_alloc x EStart x' w' /\ cs_words x EStart x' w' /\
-                    cs_mark x EStart x' w' /\ cs_old x EStart x'))
+                    cs_mark x EStart x' w' /\ cs_old x EStart x' /\ cs_cyc x x' w'))
   = let w' = { vw x with maj = m' } in
     reveal_opaque (`%r_heap) (r_heap #c);
     keep_cs x EStart x' w';
     reveal_opaque (`%cs_alloc) (cs_alloc #c);
     reveal_opaque (`%cs_mark) (cs_mark #c);
     C.forall_intro (C.move_requires (colours_word x EStart x' w'));
-    reveal_opaque (`%cs_words) (cs_words #c)
+    reveal_opaque (`%cs_words) (cs_words #c);
+    cyc_same x x' w'
 
 #push-options "--z3rlimit 40"
 let start_step (#c: comps) (x: config c)
   : Lemma (requires faithful c.r /\ rinv x /\ hyps_at c x EStart /\ enabled c x EStart)
-          (ensures (let x' = step c x EStart in rinv x' /\ concl_step x EStart x' /\ rback x x'))
+          (ensures (let x' = step c x EStart in rinv x' /\ concl_step x EStart x' /\ rback x x' /\ cyc x x'))
   = let e = EStart in
     let x' = step c x e in
     let w = vw x in
@@ -280,7 +281,7 @@ let sl_cs (#c: comps) (x x': config c) (h': c.t) (m': mheap)
                     (forall (o: nat). c.a.free x.ast h' o == c.a.free x.ast x.w.cmaj o))
           (ensures (let w' = { vw x with maj = m' } in
                     cs_keep x ESlice x' w' /\ cs_alloc x ESlice x' w' /\ cs_words x ESlice x' w' /\
-                    cs_mark x ESlice x' w' /\ cs_old x ESlice x'))
+                    cs_mark x ESlice x' w' /\ cs_old x ESlice x' /\ cs_cyc x x' w'))
   = let w' = { vw x with maj = m' } in
     reveal_opaque (`%r_heap) (r_heap #c);
     keep_cs x ESlice x' w';
@@ -290,12 +291,13 @@ let sl_cs (#c: comps) (x x': config c) (h': c.t) (m': mheap)
     assert (mark_decreases (mj x) m' (live x'));
     reveal_opaque (`%cs_mark) (cs_mark #c);
     C.forall_intro (C.move_requires (colours_word x ESlice x' w'));
-    reveal_opaque (`%cs_words) (cs_words #c)
+    reveal_opaque (`%cs_words) (cs_words #c);
+    cyc_same x x' w'
 
 #push-options "--z3rlimit 40"
 let slice_step (#c: comps) (x: config c)
   : Lemma (requires faithful c.r /\ rinv x /\ hyps_at c x ESlice /\ enabled c x ESlice)
-          (ensures (let x' = step c x ESlice in rinv x' /\ concl_step x ESlice x' /\ rback x x'))
+          (ensures (let x' = step c x ESlice in rinv x' /\ concl_step x ESlice x' /\ rback x x' /\ cyc x x'))
   = let e = ESlice in
     let x' = step c x e in
     let w = vw x in

@@ -463,12 +463,16 @@ let w_cs (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': lis
 
 let w_finish (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': list slot) (m': mheap)
   : Lemma (requires faithful c.r /\ wok x x' o i v h' rem' m' /\ views x' (wnext x rem' m'))
-          (ensures rinv x' /\ concl_step x (EWrite (Major o) i v) x' /\ rback x x')
+          (ensures rinv x' /\ concl_step x (EWrite (Major o) i v) x' /\ rback x x' /\ cyc x x')
   = w_r_reach x x' o i v h' rem' m';
     w_r_res x x' o i v h' rem' m';
     w_r_young x x' o i v h' rem' m';
     w_r_col x x' o i v h' rem' m';
     w_cs x x' o i v h' rem' m';
+    w_basic x x' o i v h' rem' m';
+    C.forall_intro (wp_hd x o i v rem' m');
+    wp_hd x o i v rem' m' 0;
+    cyc_same x x' (wnext x rem' m');
     step_out_intro x (EWrite (Major o) i v) x' (wnext x rem' m')
 
 #push-options "--z3rlimit 40"
@@ -476,7 +480,7 @@ let write_step (#c: comps) (x: config c) (o i: nat) (v: value)
   : Lemma (requires faithful c.r /\ rinv x /\ hyps_at c x (EWrite (Major o) i v) /\
                     mutator_ok x (EWrite (Major o) i v))
           (ensures (let e = EWrite (Major o) i v in let x' = step c x e in
-                    rinv x' /\ concl_step x e x' /\ rback x x'))
+                    rinv x' /\ concl_step x e x' /\ rback x x' /\ cyc x x'))
   = let e = EWrite (Major o) i v in
     let x' = step c x e in
     let w = vw x in

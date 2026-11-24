@@ -102,7 +102,7 @@ let ho_col (#c: comps) (x: config c) (p: c.k.progress) (o: nat)
 #push-options "--z3rlimit 40"
 let handover_step (#c: comps) (x: config c)
   : Lemma (requires faithful c.r /\ rinv x /\ hyps_at c x EHandover /\ enabled c x EHandover)
-          (ensures (let x' = step c x EHandover in rinv x' /\ concl_step x EHandover x' /\ rback x x'))
+          (ensures (let x' = step c x EHandover in rinv x' /\ concl_step x EHandover x' /\ rback x x' /\ cyc x x'))
   = let e = EHandover in
     let x' = step c x e in
     let w = vw x in
@@ -139,6 +139,8 @@ let handover_step (#c: comps) (x: config c)
       = if n < m.size then word_xor c.a x.ast x.w.cmaj m n in
     C.forall_intro wd;
     reveal_opaque (`%cs_words) (cs_words #c);
+    agree_refl m;
+    cyc_agree x x' w;
     step_out_intro x e x' w
 #pop-options
 
@@ -291,23 +293,50 @@ let sw_cs (#c: comps) (x x': config c) (p p': c.k.progress) (h': c.t) (st': c.a.
     C.forall_intro (C.move_requires (sw_word x p p' h' st' res m'));
     reveal_opaque (`%cs_words) (cs_words #c)
 
+let sw_freed (#c: comps) (x: config c) (p p': c.k.progress) (h': c.t) (st': c.a.state) (res: step_result)
+    (m': mheap) (o n: nat)
+  : Lemma (requires sw_pre x p /\ spost x p p' h' st' res m' /\ in_use_c x o /\ ~(in_use c.a st' h' m' o) /\
+                    covers (mj x) o n)
+          (ensures free_word c.a st' h' m' n)
+  = reveal_opaque (`%spost) (spost #c);
+    if FStar.IndefiniteDescription.strong_excluded_middle (col_of (mj x) o == White /\ region c.k p p' o) then ()
+    else sw_keep x p p' h' st' res m' o
+
+let sw_cyc1 (#c: comps) (x x': config c) (p p': c.k.progress) (h': c.t) (st': c.a.state) (res: step_result)
+    (m': mheap) (o: nat)
+  : Lemma (requires sw_pre x p /\ spost x p p' h' st' res m' /\ sw_next x x' p' h' st')
+          (ensures (iu x' m' o == true ==> in_use_c x o == true /\ wz_of m' o == wz_of (mj x) o) /\
+                   (forall (n: nat). in_use_c x o == true /\ iu x' m' o == false /\ covers (mj x) o n ==>
+                      free_w x' ({ vw x with maj = m' }) n))
+  = (if iu x' m' o then sw_back x p p' h' st' res m' o);
+    C.forall_intro (C.move_requires (sw_freed x p p' h' st' res m' o))
+
+let sw_cyc (#c: comps) (x x': config c) (p p': c.k.progress) (h': c.t) (st': c.a.state) (res: step_result)
+    (m': mheap)
+  : Lemma (requires sw_pre x p /\ spost x p p' h' st' res m' /\ sw_next x x' p' h' st')
+          (ensures cs_cyc x x' ({ vw x with maj = m' }))
+  = C.forall_intro (sw_cyc1 x x' p p' h' st' res m');
+    reveal_opaque (`%spost) (spost #c);
+    reveal_opaque (`%cs_cyc) (cs_cyc #c)
+
 let sw_finish (#c: comps) (x x': config c) (p p': c.k.progress) (h': c.t) (st': c.a.state) (res: step_result)
     (m': mheap)
   : Lemma (requires faithful c.r /\ rinv x /\ sw_pre x p /\ spost x p p' h' st' res m' /\
                     sw_next x x' p' h' st' /\ views x' ({ vw x with maj = m' }))
-          (ensures rinv x' /\ concl_step x ESweep x' /\ rback x x')
+          (ensures rinv x' /\ concl_step x ESweep x' /\ rback x x' /\ cyc x x')
   = let w' = { vw x with maj = m' } in
     sw_heap_ok x x' p p' h' st' res m';
     heap_step x x' w';
     sw_inv x x' p p' h' st' res m';
     sw_cs x x' p p' h' st' res m';
     sw_old x x' p p' h' st' res m';
+    sw_cyc x x' p p' h' st' res m';
     step_out_intro x ESweep x' w'
 
 #push-options "--z3rlimit 40"
 let sweep_step (#c: comps) (x: config c)
   : Lemma (requires faithful c.r /\ rinv x /\ hyps_at c x ESweep /\ enabled c x ESweep)
-          (ensures (let x' = step c x ESweep in rinv x' /\ concl_step x ESweep x' /\ rback x x'))
+          (ensures (let x' = step c x ESweep in rinv x' /\ concl_step x ESweep x' /\ rback x x' /\ cyc x x'))
   = let e = ESweep in
     let x' = step c x e in
     let w = vw x in
@@ -340,7 +369,7 @@ let sweep_step (#c: comps) (x: config c)
 #push-options "--z3rlimit 40"
 let end_step (#c: comps) (x: config c)
   : Lemma (requires faithful c.r /\ rinv x /\ hyps_at c x EEnd /\ enabled c x EEnd)
-          (ensures (let x' = step c x EEnd in rinv x' /\ concl_step x EEnd x' /\ rback x x'))
+          (ensures (let x' = step c x EEnd in rinv x' /\ concl_step x EEnd x' /\ rback x x' /\ cyc x x'))
   = let e = EEnd in
     let x' = step c x e in
     let w = vw x in
@@ -371,5 +400,7 @@ let end_step (#c: comps) (x: config c)
       = if n < m.size then word_xor c.a x.ast x.w.cmaj m n in
     C.forall_intro wd;
     reveal_opaque (`%cs_words) (cs_words #c);
+    agree_refl m;
+    cyc_agree x x' w;
     step_out_intro x e x' w
 #pop-options
