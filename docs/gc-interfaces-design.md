@@ -3072,3 +3072,38 @@ module outside the proof changed, so the 88 modules of §16.11 stand.
 
 (`Views`, `Words`, `RInv`, `StepFacts` are unchanged and were rechecked in
 the same runs, 2-3 s each.)
+
+### 16.13 Checkpoint D: two cycles, and the theorem
+
+**`Top.TwoCycles` (66 lines): (3c).**  `unreach_at`: an object in use and
+unreachable at `t` that stays in use through `t'` is unreachable at `t'`
+(induction with `rback` from each step).  `two_obj`: either the object
+leaves use somewhere in `(t, s2]`, or it is in use and unreachable at `s2`,
+so in the stop-the-world set at `s2`, and by (4) of the cycle `s2..j2` it
+leaves use at some `u + 1` with `s2 <= u <= j2`.  `two_cycles_ok` needs
+only `j1 < s2`; the hypothesis that no cycle starts between the two is not
+used.
+
+**`Top.Correct` (63 lines): the theorem.**  `run_correct`: under
+`faithful c.r /\ run_ok c sty n ny es /\ run_hyps c n ny es`,
+`conclusions c n ny es` (from `points_ok`, `cycle_ok`, `two_cycles_ok`).
+`gc_correct_local_ok c sty : Lemma (gc_correct_local c sty)` and
+`gc_correct_ok c sty : Lemma (gc_correct_local c sty /\ gc_correct c sty)`
+(the latter by `gc_correct_local_implies`), for every `c` and `sty`;
+`gc_correct_both c` names both styles.  No hypotheses beyond the stated
+ones: the lemmas have no `requires`, and the propositions carry their own
+(`faithful c.r` for the local form, `components_ok c` for `gc_correct`).
+The witness runs of `FFWSeq`/`FFWInc` (`ff_vacuity_sequential`,
+`ff_vacuity_incremental`) meet these hypotheses, one run for each style.
+
+**No new gap.**  No existing module changed.
+
+**Checking.**  The two new modules, from removed `.checked` files, without
+`--retry`, on the caches of §16.12:
+
+| Module | lines | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|---|
+| `TwoCycles` | 66 | 3 s | 4 s | 3 s |
+| `Correct` | 63 | 4 s | 3 s | 4 s |
+
+**Left.**  T1 and T2 (§16.7).
