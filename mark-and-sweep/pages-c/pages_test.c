@@ -1,0 +1,641 @@
+/* The page allocator (GC.Impl.Pages.*): directed tests of the extracted C.
+ *
+ * Each test lays out a small heap of 32 KB pages by hand (zero_addr = 0, so
+ * offsets are addresses), runs the extracted `alloc` or `sweep`, and checks
+ * every header, link, page-map entry and list head it should have written
+ * against the specification (GC.Spec.Pages.*):
+ *   - a small block takes the first free slot of the first page on its
+ *     class's list, or a fresh pool page whose slots are linked in order;
+ *     a block smaller than its slot gets a blue filler after it;
+ *   - a large block is carved from the right of the first listed block that
+ *     fits, or gets a new run of free pages, the rest of the run one blue
+ *     block listed in front of list 0 when it has at least lg_min words;
+ *   - when nothing fits, nothing changes;
+ *   - the sweep whitens survivors, links each pool page's dead slots from the
+ *     lowest one up, appends each swept page with a free slot to its class's
+ *     list (address order, with the list's tail kept), gives back pool pages with no survivor and whole free
+ *     pages of runs, merges dead stretches of runs, and lists every merged
+ *     block of at least lg_min words, in address order, in front of list 0;
+ *   - incremental mode (plan section 28): slices of the sweep, one unit at a
+ *     time, leave exactly what the eager sweep leaves; allocation mid-sweep
+ *     takes swept pages only, in the phase's colour with its tag, leaves
+ *     unswept pages untouched, and its objects survive the rest of the sweep;
+ *   - the minor collection (plan section 30), idle, while marking and
+ *     mid-sweep: every object reachable from the roots copied with its size
+ *     and tag, in the phase's colour; an object pointing at another nursery
+ *     object, a closure reached through an infix pointer, a remembered slot;
+ *     the roots and slots rewritten, the nursery reset.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+#include "GC_Pages.h"
+#include "krmlinit.h"
+
+#define PW 4096ULL            /* words per page (GC.Spec.Pages.Params) */
+#define PB (PW * 8ULL)        /* bytes per page */
+#define NCLS 31
+#define NL 17
+#define LG_MIN 129ULL         /* small_max + 1 */
+#define MAXP 8
+#define TAILB 16ULL         /* the heap's tail after the pages (plan §23.5) */
+#define MEMB (MAXP * PB + TAILB)
+
+static uint8_t *mem;
+static heap_t heap;
+static prec pm[MAXP];          /* stored records: the epoch of the last sweep */
+/* The word array (State.tw): avail, atail, the large lists, the hint and the
+ * epoch, then the class tables, which init fills. */
+#define O_AT NCLS
+#define O_LG (2 * NCLS)
+#define O_MT (2 * NCLS + NL)
+#define W_LEN (O_MT + 2 + 129 + 2 * NCLS)
+static uint64_t tw[W_LEN];
+#define avail (tw)
+#define atail (tw + O_AT)
+#define large (tw + O_LG)
+#define meta (tw + O_MT)
+static pstate_t st;
+static uint64_t np;
+static int failures, checks;
+
+enum { WHITE = 0, GRAY = 1, BLUE = 2, BLACK = 3 };
+enum { FREE = 0, POOL = 1, HEAD = 2, CONT = 3 };
+
+static void wr(uint64_t a, uint64_t v) { memcpy(mem + a, &v, 8); }
+static uint64_t rd(uint64_t a) { uint64_t v; memcpy(&v, mem + a, 8); return v; }
+static uint64_t hdr(uint64_t wz, uint64_t col) { return (wz << 10) | (col << 8); }
+static uint64_t pg(uint64_t i) { return i * PB; }
+
+#define CHECK(name, cond) do { \
+    checks++; \
+    if (!(cond)) { printf("FAIL: pages: %s: %s (line %d)\n", name, #cond, __LINE__); failures++; } \
+} while (0)
+
+/* A page's record as the specification sees it (State.pinfo, `view`). */
+typedef struct { uint8_t code; uint64_t arg; bool swept; uint64_t free_head, nfree, next; } vrec;
+
+static vrec rec(uint8_t code, uint64_t arg, bool swept, uint64_t fh, uint64_t nf, uint64_t nx) {
+    vrec r = { .code = code, .arg = arg, .swept = swept, .free_head = fh, .nfree = nf, .next = nx };
+    return r;
+}
+
+/* Page i's record as the extracted code reads it (State.to_pinfo): swept
+ * when it is free or was swept in the current epoch. */
+static vrec V(uint64_t i) {
+    prec p = pm[i];
+    bool fr = !(p.pcode == POOL && p.parg < NCLS) && !(p.pcode == HEAD && p.parg > 0) && p.pcode != CONT;
+    return rec(p.pcode, p.parg, fr || p.sep == meta[1], p.pfree_head, p.pnfree, p.pnext);
+}
+
+/* Store a record as the extracted code does (State.of_pinfo). */
+static void put(uint64_t i, vrec r) {
+    prec p = { .pcode = r.code, .parg = r.arg, .sep = r.swept ? meta[1] : 0,
+               .pfree_head = r.free_head, .pnfree = r.nfree, .pnext = r.next };
+    pm[i] = p;
+}
+
+static int same_rec(vrec a, vrec b) {
+    return a.code == b.code && a.arg == b.arg && a.swept == b.swept &&
+           a.free_head == b.free_head && a.nfree == b.nfree && a.next == b.next;
+}
+
+/* A heap of `n` free pages and the two-word tail the layout reserves after
+ * them, from the extracted `init`: one blue block per page and one for the
+ * tail, every entry a free page's, every list empty.  Checked once here. */
+static void fresh(uint64_t n) {
+    np = n;
+    heap_size_u64 = n * PB + TAILB;
+    zero_addr = 0;
+    krmlinit_globals();
+    memset(mem, 0xAB, (size_t)MEMB);
+    heap.data = mem;
+    heap.size = (size_t)heap_size_u64;
+    for (int i = 0; i < MAXP; i++) pm[i] = (prec){ .pcode = HEAD, .parg = 7, .sep = 99, .pfree_head = 1, .pnfree = 2, .pnext = 3 };
+    meta[0] = 5; meta[1] = 0;
+    for (int c = 0; c < NCLS; c++) avail[c] = 5, atail[c] = 6;
+    for (int k = 0; k < NL; k++) large[k] = 9;
+    st.tpm = pm; st.tw = tw;
+    init(heap, st);
+    for (uint64_t i = 0; i < n; i++) {
+        CHECK("init", rd(pg(i)) == hdr(PW - 1, BLUE));
+        CHECK("init", same_rec(V(i), rec(FREE, 0, true, 0, 0, 0)));
+    }
+    for (int c = 0; c < NCLS; c++) CHECK("init", avail[c] == 0 && atail[c] == 0);
+    for (int k = 0; k < NL; k++) CHECK("init", large[k] == 0);
+    CHECK("init tail", rd(pg(n)) == hdr(1, BLUE));
+    memset(mem, 0, (size_t)MEMB);
+    for (uint64_t i = 0; i < n; i++) wr(pg(i), hdr(PW - 1, BLUE));
+    wr(pg(n), hdr(1, BLUE));
+}
+
+/* A heap of whole pages and a tail of 3 words: `init` gives the tail one
+ * blue block. */
+static void test_init_tail(void) {
+    heap_size_u64 = 2 * PB + 24;
+    zero_addr = 0;
+    krmlinit_globals();
+    memset(mem, 0xAB, (size_t)MEMB);
+    heap.data = mem;
+    heap.size = (size_t)heap_size_u64;
+    st.tpm = pm; st.tw = tw;
+    init(heap, st);
+    CHECK("init tail", rd(0) == hdr(PW - 1, BLUE) && rd(PB) == hdr(PW - 1, BLUE));
+    CHECK("init tail", rd(2 * PB) == hdr(2, BLUE));
+    CHECK("init tail", same_rec(V(1), rec(FREE, 0, true, 0, 0, 0)));
+}
+
+/* ------------------------------------------------------------------------ */
+/* Allocation                                                                */
+/* ------------------------------------------------------------------------ */
+
+static void test_small(void) {
+    fresh(4);
+
+    /* wosize 1: class 0 (2-word slots); page 0 becomes a pool page, slot 0 */
+    uint64_t r = alloc(heap, st, 1, White);
+    CHECK("small first", r == 8);
+    CHECK("small first", rd(0) == hdr(1, WHITE));
+    /* 2048 slots, no tail; slot k links to slot k+1's object */
+    CHECK("small first", rd(16) == hdr(1, BLUE) && rd(24) == 40);
+    CHECK("small first", rd(pg(1) - 16) == hdr(1, BLUE) && rd(pg(1) - 8) == 0);
+    CHECK("small first", same_rec(V(0), rec(POOL, 0, true, 24, 2047, 0)));
+    CHECK("small first", avail[0] == 1);
+    CHECK("small first", rd(pg(1)) == hdr(PW - 1, BLUE) && V(1).code == FREE);
+
+    /* the next one pops slot 1; black, as while marking */
+    r = alloc(heap, st, 1, Black);
+    CHECK("small black", r == 24);
+    CHECK("small black", rd(16) == hdr(1, BLACK));
+    CHECK("small black", same_rec(V(0), rec(POOL, 0, true, 40, 2046, 0)));
+
+    /* wosize 0 takes a 2-word slot: its header, then a 1-word blue filler */
+    r = alloc(heap, st, 0, White);
+    CHECK("wosize 0", r == 40);
+    CHECK("wosize 0", rd(32) == hdr(0, WHITE) && rd(40) == hdr(0, BLUE));
+    CHECK("wosize 0", same_rec(V(0), rec(POOL, 0, true, 56, 2045, 0)));
+
+    /* wosize 8 (9 words): class 7 (10-word slots), on page 1; a 1-word filler;
+     * 409 slots and a 6-word tail filler */
+    r = alloc(heap, st, 8, White);
+    CHECK("filler", r == pg(1) + 8);
+    CHECK("filler", rd(pg(1)) == hdr(8, WHITE) && rd(pg(1) + 72) == hdr(0, BLUE));
+    CHECK("filler", rd(pg(1) + 80) == hdr(9, BLUE) && rd(pg(1) + 88) == pg(1) + 168);
+    CHECK("filler", rd(pg(1) + 408 * 80) == hdr(9, BLUE) && rd(pg(1) + 408 * 80 + 8) == 0);
+    CHECK("filler", rd(pg(1) + 409 * 80) == hdr(5, BLUE));
+    CHECK("filler", same_rec(V(1), rec(POOL, 7, true, pg(1) + 88, 408, 0)));
+    CHECK("filler", avail[7] == 2 && avail[0] == 1);
+}
+
+static void test_large(void) {
+    fresh(4);
+    put(0, rec(POOL, 0, true, 0, 0, 0));   /* pages 0 and 1 in use */
+    put(1, rec(POOL, 0, true, 0, 0, 0));
+
+    /* wosize 200: no listed block, so a new run of one page (page 2); the
+     * 3895 words left are one blue block, listed */
+    uint64_t r = alloc(heap, st, 200, White);
+    uint64_t rest = pg(2) + 201 * 8;
+    CHECK("new run", r == pg(2) + 8);
+    CHECK("new run", rd(pg(2)) == hdr(200, WHITE));
+    CHECK("new run", rd(rest) == hdr(3894, BLUE) && rd(rest + 8) == 0);
+    CHECK("new run", large[0] == rest + 8);
+    CHECK("new run", same_rec(V(2), rec(HEAD, 1, true, 0, 0, 0)));
+
+    /* wosize 300 is carved from the right of that block, which stays listed */
+    r = alloc(heap, st, 300, White);
+    uint64_t obj_hd = rest + 3594 * 8;
+    CHECK("carve", r == obj_hd + 8);
+    CHECK("carve", rd(rest) == hdr(3593, BLUE) && rd(rest + 8) == 0);
+    CHECK("carve", rd(obj_hd) == hdr(300, WHITE));
+    CHECK("carve", large[0] == rest + 8);
+
+    /* wosize 3500: 3594 words left would leave 93 < lg_min: carved, and the
+     * remainder unlinked (the head becomes its link, 0) */
+    r = alloc(heap, st, 3500, White);
+    CHECK("unlink", r == rest + 93 * 8 + 8);
+    CHECK("unlink", rd(rest) == hdr(92, BLUE) && rd(rest + 93 * 8) == hdr(3500, WHITE));
+    CHECK("unlink", large[0] == 0);
+
+    /* wosize 5000 needs two free pages; only page 3 is free: nothing changes */
+    uint8_t *before = malloc((size_t)heap_size_u64);
+    memcpy(before, mem, (size_t)heap_size_u64);
+    prec pm_before[MAXP]; memcpy(pm_before, pm, sizeof pm);
+    r = alloc(heap, st, 5000, White);
+    CHECK("no room", r == 0);
+    CHECK("no room", memcmp(before, mem, (size_t)heap_size_u64) == 0);
+    CHECK("no room", memcmp(pm_before, pm, sizeof pm) == 0 && large[0] == 0);
+    free(before);
+
+    /* wosize 4095 fills page 3 exactly: no rest */
+    r = alloc(heap, st, 4095, White);
+    CHECK("full page", r == pg(3) + 8 && rd(pg(3)) == hdr(4095, WHITE));
+    CHECK("full page", same_rec(V(3), rec(HEAD, 1, true, 0, 0, 0)) && large[0] == 0);
+
+    /* now no free page at all: a small block of a new class fails */
+    r = alloc(heap, st, 2, White);
+    CHECK("no page", r == 0 && avail[1] == 0);
+}
+
+static void test_two_pages(void) {
+    fresh(4);
+    put(0, rec(POOL, 0, true, 0, 0, 0));
+    /* wosize 5000 (5001 words): two pages, 1, 2; 3191 words left, listed */
+    uint64_t r = alloc(heap, st, 5000, White);
+    CHECK("two pages", r == pg(1) + 8 && rd(pg(1)) == hdr(5000, WHITE));
+    CHECK("two pages", rd(pg(1) + 5001 * 8) == hdr(3190, BLUE));
+    CHECK("two pages", large[0] == pg(1) + 5001 * 8 + 8);
+    CHECK("two pages", same_rec(V(1), rec(HEAD, 2, true, 0, 0, 0)));
+    CHECK("two pages", same_rec(V(2), rec(CONT, 0, true, 0, 0, 0)));
+}
+
+/* ------------------------------------------------------------------------ */
+/* The sweep                                                                 */
+/* ------------------------------------------------------------------------ */
+
+/* A pool page of class 0 (2-word slots) whose slots have the given colours
+ * (wosize 1 each); the other slots are free. */
+static void pool_page(uint64_t i, int n, const int *col) {
+    for (uint64_t k = 0; k < PW / 2; k++) {
+        uint64_t a = pg(i) + k * 16;
+        if ((int)k < n) wr(a, hdr(1, (uint64_t)col[k]));
+        else { wr(a, hdr(1, BLUE)); wr(a + 8, 0); }
+    }
+    put(i, rec(POOL, 0, true, 0, 0, 0));
+}
+
+/* A run of `n` pages at `h` holding blocks of the given whole sizes and
+ * colours, end to end. */
+static void run_pages(uint64_t h, uint64_t n, int m, const uint64_t *w, const int *col) {
+    uint64_t a = pg(h);
+    for (int k = 0; k < m; k++) { wr(a, hdr(w[k] - 1, (uint64_t)col[k])); a += w[k] * 8; }
+    put(h, rec(HEAD, n, true, 0, 0, 0));
+    for (uint64_t j = h + 1; j < h + n; j++) put(j, rec(CONT, 0, true, 0, 0, 0));
+}
+
+static void test_sweep(void) {
+    fresh(8);
+    /* page 0: slot 0 black, slot 1 white, the rest free */
+    { int col[] = { BLACK, WHITE }; pool_page(0, 2, col); }
+    /* page 1: a pool page with no survivor */
+    { int col[] = { WHITE, WHITE, WHITE }; pool_page(1, 3, col); }
+    /* pages 2-3: a run, a black block of 100 words then white ones */
+    { uint64_t w[] = { 100, 50, 2 * PW - 150 }; int col[] = { BLACK, WHITE, WHITE };
+      run_pages(2, 2, 3, w, col); }
+    /* page 4: a run with nothing black */
+    { uint64_t w[] = { PW }; int col[] = { WHITE }; run_pages(4, 1, 1, w, col); }
+    /* page 5: a run with two dead stretches that are listed and one that is
+     * too small, between black blocks */
+    { uint64_t w[] = { 200, 100, 300, 50, 40, 100, PW - 790 };
+      int col[] = { WHITE, BLACK, WHITE, BLUE, BLACK, WHITE, BLACK };
+      run_pages(5, 1, 7, w, col); }
+    /* page 6: free; page 7: a run whose dead tail is too small to list */
+    { uint64_t w[] = { PW - 20, 20 }; int col[] = { BLACK, WHITE }; run_pages(7, 1, 2, w, col); }
+    avail[0] = 1;            /* stale lists, which the sweep clears */
+    large[0] = pg(6) + 8;
+
+    sweep(heap, st);
+
+    /* page 0: slot 0 white; slots 1..2047 free, each linked to the one
+     * after it, the last to nothing; the list head is slot 1 */
+    CHECK("pool", rd(pg(0)) == hdr(1, WHITE));
+    CHECK("pool", rd(16) == hdr(1, BLUE) && rd(24) == 40);
+    CHECK("pool", rd(32) == hdr(1, BLUE) && rd(40) == 56);
+    CHECK("pool", rd(pg(1) - 16) == hdr(1, BLUE) && rd(pg(1) - 8) == 0);
+    CHECK("pool", same_rec(V(0), rec(POOL, 0, true, 24, 2047, 0)));
+    CHECK("pool", avail[0] == 1);
+    for (int c = 1; c < NCLS; c++) CHECK("pool", avail[c] == 0);
+    /* page 1: given back */
+    CHECK("empty pool", rd(pg(1)) == hdr(PW - 1, BLUE) && same_rec(V(1), rec(FREE, 0, true, 0, 0, 0)));
+    /* pages 2-3: the survivor; the dead stretch [100, 2 pages) is the piece
+     * before page 3, 3996 words and listed, and page 3 given back */
+    uint64_t pre = pg(2) + 800;
+    CHECK("run", rd(pg(2)) == hdr(99, WHITE));
+    CHECK("run", rd(pre) == hdr(3995, BLUE));
+    CHECK("run", rd(pg(3)) == hdr(PW - 1, BLUE) && same_rec(V(3), rec(FREE, 0, true, 0, 0, 0)));
+    CHECK("run", same_rec(V(2), rec(HEAD, 1, true, 0, 0, 0)));
+    /* page 4: given back */
+    CHECK("dead run", rd(pg(4)) == hdr(PW - 1, BLUE) && same_rec(V(4), rec(FREE, 0, true, 0, 0, 0)));
+    /* page 5: [200 dead][100 black][300 + 50 dead, merged][40 black][100 dead]
+     * [3306 black]: blocks of 200 and 350 words are listed, 100 is not */
+    uint64_t p5 = pg(5);
+    CHECK("merge", rd(p5) == hdr(199, BLUE));
+    CHECK("merge", rd(p5 + 200 * 8) == hdr(99, WHITE));
+    CHECK("merge", rd(p5 + 300 * 8) == hdr(349, BLUE));
+    CHECK("merge", rd(p5 + 650 * 8) == hdr(39, WHITE));
+    CHECK("merge", rd(p5 + 690 * 8) == hdr(99, BLUE));
+    CHECK("merge", rd(p5 + 790 * 8) == hdr(PW - 791, WHITE));
+    CHECK("merge", same_rec(V(5), rec(HEAD, 1, true, 0, 0, 0)));
+    /* page 7: its 20-word tail is too small to list */
+    CHECK("small piece", rd(pg(7)) == hdr(PW - 21, WHITE) && rd(pg(7) + (PW - 20) * 8) == hdr(19, BLUE));
+    CHECK("small piece", same_rec(V(7), rec(HEAD, 1, true, 0, 0, 0)));
+    /* page 6 stays free */
+    CHECK("free page", same_rec(V(6), rec(FREE, 0, true, 0, 0, 0)));
+    /* list 0, in the order the units are swept, each run's blocks in address
+     * order in front of the list so far: page 5's two blocks, then page 2's */
+    CHECK("list", large[0] == p5 + 8);
+    CHECK("list", rd(p5 + 8) == p5 + 300 * 8 + 8);
+    CHECK("list", rd(p5 + 300 * 8 + 8) == pre + 8);
+    CHECK("list", rd(pre + 8) == 0);
+    for (int k = 1; k < NL; k++) CHECK("list", large[k] == 0);
+}
+
+/* The sweep, then an allocation from what it freed. */
+static void test_sweep_then_alloc(void) {
+    fresh(2);
+    { int col[] = { WHITE, BLACK }; pool_page(0, 2, col); }
+    { uint64_t w[] = { PW }; int col[] = { WHITE }; run_pages(1, 1, 1, w, col); }
+    sweep(heap, st);
+    /* slot 0 is free and comes first; it links to slot 2, past the survivor */
+    CHECK("cycle sweep", same_rec(V(0), rec(POOL, 0, true, 8, 2047, 0)) && rd(8) == 40);
+    CHECK("cycle sweep", V(1).code == FREE && large[0] == 0);
+    uint64_t r = alloc(heap, st, 1, White);
+    CHECK("cycle alloc", r == 8 && rd(0) == hdr(1, WHITE));
+    CHECK("cycle alloc", V(0).free_head == 40 && V(0).nfree == 2046);
+    r = alloc(heap, st, 1000, White);
+    CHECK("cycle alloc", r == pg(1) + 8 && same_rec(V(1), rec(HEAD, 1, true, 0, 0, 0)));
+}
+
+/* Pages join their class's list in address order: the sweep appends at the
+ * tail, and allocation then takes the lowest page first.  A page that fills
+ * up leaves the front; the last one leaving empties the tail too. */
+static void test_list_order(void) {
+    fresh(3);
+    { int col[] = { BLACK }; pool_page(0, 1, col); }
+    { int col[] = { BLACK }; pool_page(1, 1, col); }
+    { int col[] = { BLACK }; pool_page(2, 1, col); }
+    sweep(heap, st);
+    CHECK("order", avail[0] == 1 && atail[0] == 3);
+    CHECK("order", V(0).next == 2 && V(1).next == 3 && V(2).next == 0);
+    CHECK("order", V(0).free_head == 24 && V(0).nfree == 2047);
+    uint64_t r = alloc(heap, st, 1, White);
+    CHECK("order alloc", r == 24 && V(0).free_head == 40);
+    /* fill page 0: it leaves the front, the tail stays */
+    for (int k = 1; k < 2047; k++) alloc(heap, st, 1, White);
+    CHECK("order fill", avail[0] == 2 && atail[0] == 3 && V(0).nfree == 0);
+    r = alloc(heap, st, 1, White);
+    CHECK("order next page", r == pg(1) + 24);
+    /* fill pages 1 and 2: the list and its tail are empty */
+    for (int k = 1; k < 2 * 2047; k++) alloc(heap, st, 1, White);
+    CHECK("order empty", avail[0] == 0 && atail[0] == 0);
+}
+
+/* ---- incremental mode (plan section 28) --------------------------------- */
+
+/* test_sweep's heap, for the incremental tests. */
+static void sweep_layout(void) {
+    fresh(8);
+    { int col[] = { BLACK, WHITE }; pool_page(0, 2, col); }
+    { int col[] = { WHITE, WHITE, WHITE }; pool_page(1, 3, col); }
+    { uint64_t w[] = { 100, 50, 2 * PW - 150 }; int col[] = { BLACK, WHITE, WHITE };
+      run_pages(2, 2, 3, w, col); }
+    { uint64_t w[] = { PW }; int col[] = { WHITE }; run_pages(4, 1, 1, w, col); }
+    { uint64_t w[] = { 200, 100, 300, 50, 40, 100, PW - 790 };
+      int col[] = { WHITE, BLACK, WHITE, BLUE, BLACK, WHITE, BLACK };
+      run_pages(5, 1, 7, w, col); }
+    { uint64_t w[] = { PW - 20, 20 }; int col[] = { BLACK, WHITE }; run_pages(7, 1, 2, w, col); }
+    avail[0] = 1;
+    large[0] = pg(6) + 8;
+}
+
+/* Slices of one unit each sweep the units in address order, skipping the
+ * free page; together they leave exactly the heap, page map and lists the
+ * eager sweep leaves. */
+static void test_slices(void) {
+    static uint8_t m1[MEMB]; static prec p1[MAXP]; static uint64_t w1[W_LEN];
+    sweep_layout();
+    sweep(heap, st);
+    memcpy(m1, mem, (size_t)MEMB); memcpy(p1, pm, sizeof pm); memcpy(w1, tw, sizeof tw);
+
+    sweep_layout();
+    start_sweep(st);
+    for (uint64_t i = 0; i < 8; i++) CHECK("slice start", V(i).swept == (V(i).code == FREE));
+    uint64_t want[] = { 1, 2, 4, 5, 6, 8 };   /* pages 0, 1; runs 2-3, 4, 5; page 6 skipped, run 7 */
+    uint64_t c = 0;
+    for (int k = 0; k < 6; k++) {
+        c = sweep_slice(heap, st, c, 1);
+        CHECK("slice cursor", c == want[k]);
+        for (uint64_t i = 0; i < 8; i++)
+            if (V(i).code != FREE) CHECK("slice swept", V(i).swept == (i < c));
+    }
+    CHECK("slice end", sweep_slice(heap, st, c, 1) == 8);
+    CHECK("slices = eager sweep: heap", memcmp(m1, mem, (size_t)MEMB) == 0);
+    CHECK("slices = eager sweep: map", memcmp(p1, pm, sizeof pm) == 0);
+    CHECK("slices = eager sweep: lists", memcmp(w1, tw, sizeof tw) == 0);
+
+    /* a budget larger than the units left ends the sweep in one slice */
+    sweep_layout();
+    start_sweep(st);
+    CHECK("one slice", sweep_slice(heap, st, 0, 100) == 8);
+    CHECK("one slice = eager sweep", memcmp(m1, mem, (size_t)MEMB) == 0 && memcmp(p1, pm, sizeof pm) == 0 &&
+                                     memcmp(w1, tw, sizeof tw) == 0);
+    /* a budget of 0 sweeps nothing */
+    sweep_layout();
+    start_sweep(st);
+    CHECK("budget 0", sweep_slice(heap, st, 0, 0) == 0 && !V(0).swept);
+}
+
+/* Allocation mid-sweep: from swept pages only, white (black while marking),
+ * with its tag; unswept pages are not touched, and are told apart from the
+ * swept ones by the epoch.  The later sweep keeps the new objects. */
+static void test_mid_sweep_alloc(void) {
+    static uint8_t page1[PB];
+    fresh(4);
+    { int col[] = { BLACK, WHITE }; pool_page(0, 2, col); }
+    { int col[] = { BLACK, BLACK, WHITE }; pool_page(1, 3, col); }
+    start_sweep(st);
+    uint64_t c = sweep_slice(heap, st, 0, 1);         /* page 0 swept, page 1 not */
+    CHECK("mixed", c == 1 && V(0).swept && !V(1).swept && V(1).code == POOL);
+    CHECK("mixed", same_rec(V(0), rec(POOL, 0, true, 24, 2047, 0)) && avail[0] == 1);
+    memcpy(page1, mem + pg(1), (size_t)PB);
+
+    /* wosize 1, tag 5, sweeping: slot 1 of page 0, white */
+    uint64_t r = alloc_ph(heap, st, 1, 5, false);
+    CHECK("mid-sweep small", r == 24 && rd(16) == (hdr(1, WHITE) | 5));
+    CHECK("mid-sweep small", same_rec(V(0), rec(POOL, 0, true, 40, 2046, 0)));
+    /* wosize 8: no page of class 7 on its list; the first free page, swept */
+    r = alloc_ph(heap, st, 8, 0, false);
+    CHECK("mid-sweep new page", r == pg(2) + 8 && rd(pg(2)) == hdr(8, WHITE));
+    CHECK("mid-sweep new page", V(2).code == POOL && V(2).arg == 7 && V(2).swept);
+    /* black while marking (the same allocator, the colour of the phase) */
+    r = alloc_ph(heap, st, 1, 0, true);
+    CHECK("black", r == 40 && rd(32) == hdr(1, BLACK));
+    /* page 1, unswept, untouched by the allocations */
+    CHECK("unswept untouched", memcmp(page1, mem + pg(1), (size_t)PB) == 0 && !V(1).swept);
+
+    /* the rest of the sweep: page 1 as one unit, then a slice to the end */
+    CHECK("unit", sweep_unit(heap, st, 1) == 2 && V(1).swept);
+    CHECK("unit", rd(pg(1)) == hdr(1, WHITE) && rd(pg(1) + 16) == hdr(1, WHITE) && rd(pg(1) + 32) == hdr(1, BLUE));
+    c = sweep_slice(heap, st, c, 10);
+    CHECK("rest", c == 4);
+    for (uint64_t i = 0; i < 4; i++) CHECK("rest", V(i).swept);
+    /* the objects allocated mid-sweep are in swept pages: kept as they are */
+    CHECK("kept", rd(16) == (hdr(1, WHITE) | 5) && rd(pg(2)) == hdr(8, WHITE) && rd(32) == hdr(1, BLACK));
+    /* page 1, swept with free slots, joined class 0's list after page 0 */
+    CHECK("kept", same_rec(V(0), rec(POOL, 0, true, 56, 2045, 2)) && avail[0] == 1 && atail[0] == 2);
+    /* a unit already swept is left as it is */
+    memcpy(page1, mem + pg(1), (size_t)PB);
+    CHECK("swept unit", sweep_unit(heap, st, 1) == 2 && memcmp(page1, mem + pg(1), (size_t)PB) == 0);
+}
+
+/* A large allocation mid-sweep takes free pages, swept, beside an unswept
+ * run, which a later unit step sweeps. */
+static void test_mid_sweep_large(void) {
+    static uint8_t run0[PB];
+    fresh(4);
+    { uint64_t w[] = { 100, PW - 100 }; int col[] = { BLACK, WHITE }; run_pages(0, 1, 2, w, col); }
+    start_sweep(st);
+    memcpy(run0, mem, (size_t)PB);
+    uint64_t r = alloc_ph(heap, st, 1000, 3, false);
+    CHECK("mid-sweep large", r != 0 && r >= pg(1) && V(1).code == HEAD && V(1).swept && !V(0).swept);
+    CHECK("mid-sweep large", rd(r - 8) == (hdr(1000, WHITE) | 3));
+    CHECK("mid-sweep large", memcmp(run0, mem, (size_t)PB) == 0);
+    CHECK("run unit", sweep_unit(heap, st, 0) == 1 && V(0).swept);
+    CHECK("run unit", rd(0) == hdr(99, WHITE) && rd(800) == hdr(PW - 101, BLUE));
+    CHECK("run unit", rd(r - 8) == (hdr(1000, WHITE) | 3));
+    CHECK("run unit", sweep_slice(heap, st, 1, 5) == 4);
+}
+
+/* ---------------------------------------------------------------------------
+ * The minor collection (plan section 30): `minor_collect_idle`, `_marking`
+ * and `_sweeping`, akhil's Cheney promotion and two-pass pointer update with
+ * every copy allocated by `alloc_ph`.  The nursery is 2048 bytes
+ * (GC.Gen.Base.minor_heap_size); the major heap starts above it
+ * (zero_addr = 2048, as GC.Spec.ZeroAddr assumes), so no major address
+ * looks like a nursery one.  Each test checks the copies' headers (size,
+ * the phase's colour, the nursery object's tag) and fields, the rewritten
+ * roots and remembered slots, the forwarding array, and the reset nursery.
+ * ------------------------------------------------------------------------- */
+
+#define MHS 2048ULL
+#define ZA 2048ULL
+static uint8_t nursery[MHS];
+static uint64_t nbump;
+static minor_heap_t mh;
+static uint64_t fwd[MHS / 8];
+static uint64_t mq[MHS / 8];
+
+static void nwr(uint64_t a, uint64_t v) { memcpy(nursery + a, &v, 8); }
+static uint64_t zpg(uint64_t i) { return ZA + i * PB; }
+static uint64_t thdr(uint64_t wz, uint64_t col, uint64_t tag) { return hdr(wz, col) | tag; }
+static int is_major(uint64_t v) { return v >= ZA + 8 && v < heap_size_u64 && v % 8 == 0; }
+
+/* A nursery object of `wz` fields and tag `tag`, at the bump. */
+static uint64_t nalloc(uint64_t wz, uint64_t tag) {
+    uint64_t h = nbump;
+    nwr(h, (wz << 10) | tag);
+    nbump = h + (wz + 1) * 8;
+    return h + 8;
+}
+
+static int nursery_empty(void) {
+    for (uint64_t i = 0; i < MHS; i++) if (nursery[i]) return 0;
+    return nbump == 0;
+}
+
+/* `n` free pages above the nursery's addresses, an empty nursery, a zero
+ * forwarding array. */
+static void fresh_minor(uint64_t n) {
+    np = n;
+    heap_size_u64 = ZA + n * PB + TAILB;
+    zero_addr = ZA;
+    krmlinit_globals();
+    memset(mem, 0, (size_t)MEMB);
+    heap.data = mem;
+    heap.size = (size_t)heap_size_u64;
+    st.tpm = pm; st.tw = tw;
+    init(heap, st);
+    memset(nursery, 0, sizeof nursery);
+    nbump = 0;
+    mh.data = nursery; mh.size = (size_t)MHS; mh.bump_ref = &nbump;
+    memset(fwd, 0, sizeof fwd);
+}
+
+/* Idle: an object A pointing at another nursery object B, an unreachable
+ * object C, and a major block M whose field points at B, in the remembered
+ * set. */
+static void test_minor_idle(void) {
+    fresh_minor(4);
+    uint64_t a = nalloc(2, 0), b = nalloc(1, 3), c = nalloc(1, 0);
+    nwr(a, b); nwr(a + 8, 7); nwr(b, 11); nwr(c, a);
+    uint64_t m = alloc_ph(heap, st, 1, 0, false);
+    CHECK("minor idle", is_major(m));
+    wr(m, b);
+    uint64_t roots[1] = { a };
+    uint64_t slots[1] = { m };
+    bool ok = minor_collect_idle(mh, heap, st, roots, 1, fwd, mq, slots, 1);
+    uint64_t a2 = roots[0], b2 = rd(a2);
+    CHECK("minor idle", ok && is_major(a2) && is_major(b2) && a2 != b2 && a2 != m && b2 != m);
+    CHECK("minor idle: A copied", rd(a2 - 8) == thdr(2, WHITE, 0) && rd(a2 + 8) == 7);
+    CHECK("minor idle: B copied", rd(b2 - 8) == thdr(1, WHITE, 3) && rd(b2) == 11);
+    CHECK("minor idle: slot rewritten", rd(m) == b2 && rd(m - 8) == thdr(1, WHITE, 0));
+    CHECK("minor idle: forwarding", fwd[a / 8] == a2 && fwd[b / 8] == b2 && fwd[c / 8] == 0);
+    CHECK("minor idle: nursery reset", nursery_empty());
+}
+
+/* Marking: a closure P with an infix pointer Q into it, reached from a
+ * field of an object R and from a root. */
+static void test_minor_infix(void) {
+    fresh_minor(4);
+    uint64_t p = nalloc(4, 247);
+    uint64_t q = p + 24;                       /* its header at p + 16: offset 3 words */
+    nwr(p, 1); nwr(p + 8, 5); nwr(p + 16, (3ULL << 10) | 249); nwr(p + 24, 9);
+    uint64_t r = nalloc(1, 0);
+    nwr(r, q);
+    uint64_t roots[2] = { r, q };
+    bool ok = minor_collect_marking(mh, heap, st, roots, 2, fwd, mq, NULL, 0);
+    uint64_t r2 = roots[0], q2 = roots[1], p2 = q2 - 24;
+    CHECK("minor infix", ok && is_major(r2) && is_major(p2));
+    CHECK("minor infix: P copied black", rd(p2 - 8) == thdr(4, BLACK, 247));
+    CHECK("minor infix: P's fields", rd(p2) == 1 && rd(p2 + 8) == 5 && rd(p2 + 16) == ((3ULL << 10) | 249) && rd(p2 + 24) == 9);
+    CHECK("minor infix: R copied black", rd(r2 - 8) == thdr(1, BLACK, 0));
+    CHECK("minor infix: R's field at the same offset in P's copy", rd(r2) == q2);
+    CHECK("minor infix: forwarding", fwd[p / 8] == p2 && fwd[q / 8] == q2 && fwd[r / 8] == r2);
+    CHECK("minor infix: nursery reset", nursery_empty());
+}
+
+/* Mid-sweep: a white block X, then the sweep started; the copy goes to a
+ * swept page, white, and survives the rest of the sweep, which frees X. */
+static void test_minor_sweeping(void) {
+    fresh_minor(4);
+    uint64_t x = alloc_ph(heap, st, 1, 0, false);
+    CHECK("minor mid-sweep", x == zpg(0) + 8);
+    start_sweep(st);
+    CHECK("minor mid-sweep", !V(0).swept);
+    uint64_t a = nalloc(1, 2), b = nalloc(2, 0);
+    nwr(a, b); nwr(b, 13); nwr(b + 8, a);
+    uint64_t roots[1] = { a };
+    bool ok = minor_collect_sweeping(mh, heap, st, roots, 1, fwd, mq, NULL, 0);
+    uint64_t a2 = roots[0], b2 = rd(a2);
+    CHECK("minor mid-sweep", ok && a2 >= zpg(1) && b2 >= zpg(1) && !V(0).swept);
+    CHECK("minor mid-sweep: copies white", rd(a2 - 8) == thdr(1, WHITE, 2) && rd(b2 - 8) == thdr(2, WHITE, 0));
+    CHECK("minor mid-sweep: cycle", rd(b2) == 13 && rd(b2 + 8) == a2);
+    CHECK("minor mid-sweep: nursery reset", nursery_empty());
+    CHECK("minor mid-sweep: rest", sweep_slice(heap, st, 0, 10) == 4);
+    CHECK("minor mid-sweep: copies kept", rd(a2 - 8) == thdr(1, WHITE, 2) && rd(b2 - 8) == thdr(2, WHITE, 0) && rd(b2 + 8) == a2);
+    CHECK("minor mid-sweep: X freed", ((rd(x - 8) >> 8) & 3) == BLUE);
+}
+
+int main(void) {
+    mem = calloc((size_t)MEMB, 1);
+    if (!mem) { perror("calloc"); return 1; }
+    test_init_tail();
+    test_small();
+    test_large();
+    test_two_pages();
+    test_sweep();
+    test_sweep_then_alloc();
+    test_list_order();
+    test_slices();
+    test_mid_sweep_alloc();
+    test_mid_sweep_large();
+    test_minor_idle();
+    test_minor_infix();
+    test_minor_sweeping();
+    free(mem);
+    if (failures) { printf("pages: %d of %d checks FAILED\n", failures, checks); return 1; }
+    printf("pages: all %d checks passed\n", checks);
+    return 0;
+}

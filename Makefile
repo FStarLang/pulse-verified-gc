@@ -124,6 +124,32 @@ ROOT_MODULES = \
   generational/spec/GC.Gen.MarkPhase.Cycle.fst \
   generational/spec/GC.Gen.Cycle.fst \
   mark-and-sweep/impl/GC.Impl.Correct.fst \
+  mark-and-sweep/spec/GC.Spec.FreeLists.Push.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Init.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.PoolInit.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Theorems.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Alloc.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.SweepAll.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.SweepOrder.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.SweepVacuity.fst \
+  mark-and-sweep/spec/GC.Spec.AllocIface.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Allocator.fsti \
+  mark-and-sweep/spec/GC.Spec.Pages.Allocator.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.GcCorrect.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Vacuity.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.MidSweepRun.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Cycle.Vacuity.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Cycle.Write.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Cycle.VacuityDark.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Cycle.Carried.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Cycle.CarriedVacuity.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Cycle.MinorVacuity.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Cycle.MinorVacuity2.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.MidSweepVacuity.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.IncrVacuity.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Cycle.IdleVacuity.fst \
+  mark-and-sweep/spec/GC.Spec.Pages.Promote.PulseVacuity.fst \
+  mark-and-sweep/impl/GC.Impl.Pages.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst \
   generational/impl/GC.Gen.Impl.Barrier.fsti \
