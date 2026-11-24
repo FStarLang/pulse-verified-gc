@@ -3163,9 +3163,9 @@ proof was not checked by `gmake verify`; it and `Top.T2` are now in
 worktree (default `--retry 3`, as CI): 506 cache files, 373 modules
 verified, 0 errors, 59 min; then the four T2 modules on top, 32 s.
 
-### 16.15 T1: the statement (proposed, not yet proved)
+### 16.15 T1: the statement
 
-`Top.Transp` (new; definitions only; typechecks at seeds 0, 1, 2; not
+`Top.Transp` (definitions only; typechecks at seeds 0, 1, 2; not
 in `ROOT_MODULES` until approved).
 - **Reference semantics.**  `rstore`: objects named by allocation order,
   never moved, freed or refused; `rval` = a word held as is, or `RPtr k d`
@@ -3187,18 +3187,30 @@ in `ROOT_MODULES` until approved).
 - **Failures.**  The reference never fails.  `no_fail es`: no `EAlloc`
   of `es` returns `NoRoom` (a young allocation cannot fail in a run, it
   must be enabled; an `EMinor` that returns `OutOfRoom` ends the run).
-  The replay may fail where `es` does not: it stops just before the
-  program event it cannot perform (`stuck`: a minor collection out of
-  room; the major allocator refusing; a young allocation with no room
-  right after a minor collection).
+  The replay may fail where `es` does not (other free space, other
+  placement): it may stop just before a program event that is an
+  allocation no collection can make room for (`stuck`):
+  - (S1) a major allocation the allocator refuses right after a minor
+    collection (the nursery is then empty) followed by a whole
+    stop-the-world cycle (which then frees every object not reachable
+    from the roots);
+  - (S2) a young allocation with no room right after a minor collection
+    (the nursery is then empty);
+  - (S3) a minor collection that runs out of room right after a whole
+    stop-the-world cycle.
 - **`t1_local`** (part 1, contracts at the steps): every run with
   `no_fail` is `transparent` for some `prog` and `ι`.
 - **`t1`** (both parts, under `components_ok`): part 1, and for every
-  cycle `s..j`, `stw_replay`: `take s es @ stw_tail a b @ q`, `q` only
-  program events and minor collections (each right before a young
-  allocation, or last), a run with `no_fail`, `transparent` for the first
-  `m` events of the same `prog` (`mc es s <= m`), and either `m` is all of
-  them or the replay is `stuck` on event `m`.
+  cycle `s..j`, `stw_replay`: `take s es @ stw_tail a b @ q`, where `q`
+  is a list of chunks (`chunk`, `flat`): program events, minor
+  collections, and whole stop-the-world cycles (`stw_tail`), so the
+  replay may collect whenever it needs room.  The replay is a run with
+  `no_fail`, `transparent` for the first `m` events of the same `prog`
+  (`mc es s <= m`), and either `m` is all of them or the replay is
+  `stuck` (S1-S3) on event `m`.
+
+(Approved with the stop-the-world chunks and S1-S3, 2026-11-24; part 1
+proved, §16.16; part 2 open, gap G53 in §16.17.)
 
 ### 16.16 T1, part 1: every run is transparent
 
@@ -3262,3 +3274,11 @@ build the replay chunk by chunk, keeping the correspondence with the same
 reference program (the part 1 step lemmas apply to the replay's steps),
 and show each allocation succeeds or the replay is `stuck`.  Then `t1`,
 and `Top.T1` (or `T1Run`'s successor) into `ROOT_MODULES`.
+
+### 16.17 Gap G53: the program may name what only dropped young objects reach
+
+| Gap | Where | Problem | Proposed fix |
+|---|---|---|---|
+| G53 | T1 part 2 (`stw_replay`); `Run.value_ok`, `mutator_ok_w` | `value_ok` asks only `reachable`/`yreachable`, which start from `outside_ref`: that includes major objects pointed to by *any* young block, also one the program dropped.  So a run may drop every root to young `y` (pointing to major `o`) and later name `o` again (`ERoots [VPtr (Major o)]`), legally, if it runs no minor collection in between.  The stop-the-world replay may need one in between: its allocator may refuse where the run's did not (other placement), and (S1) asks for a minor collection before the last cycle.  That drops `y`; `o` is then not reachable in the replay, the program's event is not `mutator_ok` there, and it is no allocation, so the replay is neither complete nor `stuck`.  `stw_replay` fails for some components meeting `components_ok`. | (A) The program may use only what it reaches from its roots: `value_ok` (and the `reachable`/`yreachable` of `mutator_ok_w`) by a program reachability from the roots through fields, major and young (a subset of `reachable`); re-proofs where step lemmas unfold `value_ok`, witness runs rechecked.  (B) A fourth stop for the replay (S4): before a program event that names a block the replay's collections dropped.  (C) Part 2 only for programs that name objects they reach: a hypothesis that every reference event names reference-reachable objects (`rok` with `rreachable`). |
+
+Part 1 is not affected: it already covers every visible block.
