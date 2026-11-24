@@ -3162,3 +3162,103 @@ proof was not checked by `gmake verify`; it and `Top.T2` are now in
 `ROOT_MODULES`.  `gmake -j6 verify` from an empty `_cache` in a scratch
 worktree (default `--retry 3`, as CI): 506 cache files, 373 modules
 verified, 0 errors, 59 min; then the four T2 modules on top, 32 s.
+
+### 16.15 T1: the statement (proposed, not yet proved)
+
+`Top.Transp` (new; definitions only; typechecks at seeds 0, 1, 2; not
+in `ROOT_MODULES` until approved).
+- **Reference semantics.**  `rstore`: objects named by allocation order,
+  never moved, freed or refused; `rval` = a word held as is, or `RPtr k d`
+  (object `k`, infix offset `d`); `revent` = `RAlloc young tag vs`,
+  `RWrite`, `RRead`, `RRoots`; `rstep`, `rat prog m`.
+- **Renaming.**  `ι i : nat -> option ptr`.  `vcorr`: an integer is
+  itself; a pointer is the renamed block's address plus the offset, and
+  resolves to it; a no-scan word is held as is.  `scorr ι x r`: roots one
+  by one; every *visible* block (reachable major, `yreachable` young: what
+  the program may name) holds one reference object with the same tag,
+  size and fields; every reachable reference object is in a visible
+  block.  Visible is wider than reference-reachable: `value_ok` lets the
+  program name a major object reachable only from a dropped young object,
+  and the collector keeps it.
+- **`transparent es prog ι`.**  At every point, `scorr` with the
+  reference store after the program events so far (`mc`); every program
+  event is the next reference event renamed (`ev_corr`) and legal
+  (`rok`); every read value is the reference read, renamed.
+- **Failures.**  The reference never fails.  `no_fail es`: no `EAlloc`
+  of `es` returns `NoRoom` (a young allocation cannot fail in a run, it
+  must be enabled; an `EMinor` that returns `OutOfRoom` ends the run).
+  The replay may fail where `es` does not: it stops just before the
+  program event it cannot perform (`stuck`: a minor collection out of
+  room; the major allocator refusing; a young allocation with no room
+  right after a minor collection).
+- **`t1_local`** (part 1, contracts at the steps): every run with
+  `no_fail` is `transparent` for some `prog` and `ι`.
+- **`t1`** (both parts, under `components_ok`): part 1, and for every
+  cycle `s..j`, `stw_replay`: `take s es @ stw_tail a b @ q`, `q` only
+  program events and minor collections (each right before a young
+  allocation, or last), a run with `no_fail`, `transparent` for the first
+  `m` events of the same `prog` (`mc es s <= m`), and either `m` is all of
+  them or the replay is `stuck` on event `m`.
+
+### 16.16 T1, part 1: every run is transparent
+
+**Statement change (approved).**  `stw_replay`'s `q` is now a list of
+chunks: program events, minor collections and whole stop-the-world cycles
+(`chunk`, `flat`).  `stuck` holds only after the strongest collection:
+(S1) a major allocation refused right after a minor collection and a whole
+cycle; (S2) a young allocation with no room right after a minor
+collection; (S3) a minor collection out of room right after a whole cycle.
+
+**Part 1 proved: `t1_local c sty` for every `c` and both styles
+(`T1Run.t1_local_ok`, `t1_local_both`), no `requires`.**
+- `TrRef` (91): the store's names are those below `next`; appending a
+  program event; counting program events.
+- `TrVis` (362): visible blocks hold the roots' targets and are closed
+  under fields; any closed set holds them (`vis_sub`); the last clause of
+  `scorr` follows from the others (`scorr_intro`); a renaming cut down to
+  the visible blocks keeps `scorr` and has no stale names (`restrict`,
+  built with `Seq.init_ghost`, `clean`).
+- `TrGen` (242): one step in general: visible blocks move by `mu`, at
+  most one new block takes the next name; if each block holds its object
+  again, the roots correspond, the nursery points into the image and `mu`
+  is injective, `scorr` holds after (`sim_gen`).  A pointer into a block
+  that keeps its size, tag and closure words resolves the same way
+  (`resolve_move`).
+- `TrIP` (170): steps that leave visible blocks in place; naming the
+  program's values (`trv`).
+- `TrEvA`-`TrEvD` (214, 261, 338, 363): collector steps, reads, root
+  changes, major and young writes, major and young allocations.  Each
+  splits into a configuration lemma (the world facts, from the contracts
+  and (1a)/(2)) and a world lemma (the reference side).
+- `TrMinA`/`TrMinB` (178, 268): a minor collection: visible young blocks
+  are traced (`ymlive`), so copied (minor_post_done, G51 used here, not
+  through the conclusions); visible major blocks are kept with their young
+  pointers forwarded; roots forwarded; the renaming follows `fwd`.  Out of
+  room: nothing changes.
+- `T1Run` (345): dispatch, the induction along the run (`tr_upto`, sealed
+  per-point facts), `t1_run`, `t1_local_ok`.
+
+**No new gap.**  No existing module changed.
+
+**Checking** (from removed `.checked` files, no `--retry`):
+
+| Module | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|
+| `Transp` | 1 s | 2 s | 2 s |
+| `TrRef` | 1 s | 1 s | 1 s |
+| `TrVis` | 5 s | 5 s | 5 s |
+| `TrGen` | 4 s | 4 s | 4 s |
+| `TrIP` | 4 s | 7 s | 5 s |
+| `TrEvA` | 50 s | 58 s | 11 s |
+| `TrEvB` | 213 s | 208 s | 206 s |
+| `TrEvC` | 149 s | 159 s | 164 s |
+| `TrEvD` | 125 s | 126 s | 102 s |
+| `TrMinA` | 6 s | 6 s | 6 s |
+| `TrMinB` | 16 s | 28 s | 37 s |
+| `T1Run` | 42 s | 25 s | 35 s |
+
+**Left.**  Part 2 (`stw_replay` for every cycle, under `components_ok`):
+build the replay chunk by chunk, keeping the correspondence with the same
+reference program (the part 1 step lemmas apply to the replay's steps),
+and show each allocation succeeds or the replay is `stuck`.  Then `t1`,
+and `Top.T1` (or `T1Run`'s successor) into `ROOT_MODULES`.
