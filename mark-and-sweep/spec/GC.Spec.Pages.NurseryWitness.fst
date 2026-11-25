@@ -89,7 +89,8 @@ let nur_shape (_: unit) : Lemma (GenInv.minor_heap_shape nur)
     let hz (addr: U64.t)
       : Lemma (requires U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\ U64.v addr % 8 == 0 /\ addr <> nobj)
               (ensures minor_wosize nur addr == 0 /\ minor_tag nur addr == 0)
-      = assert (minor_read_word nur.data (U64.uint_to_t (U64.v addr - 8)) == 0UL);
+      = FStar.Math.Lemmas.lemma_mod_sub (U64.v addr) 8 1;
+        assert (minor_read_word nur.data (U64.uint_to_t (U64.v addr - 8)) == 0UL);
         zero_obj addr
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires hz);
