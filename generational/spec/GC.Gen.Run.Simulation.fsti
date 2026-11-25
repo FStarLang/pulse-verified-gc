@@ -317,12 +317,7 @@ let isomorphic (m1 m2: real_memory) : prop =
 /// isomorphic once the collector is idle, is `GC.Gen.Run.Hoisted.hoisted_isomorphic`
 /// (stated there, since its proof goes through the simulation).
 
-/// ---------------------------------------------------------------------------
-/// Later (not stated)
-/// ---------------------------------------------------------------------------
-///
-/// From the plan's "later" row, kept here as text only:
-///   * garbage stays garbage: an object the program cannot reach is never
-///     reachable again;
-///   * floating garbage is freed by the end of the first cycle that starts
-///     after it becomes unreachable.
+/// How long garbage survives -- an object the program cannot reach is never
+/// reachable again, and its block is freed by the end of the first cycle
+/// that starts after it became unreachable, never to come back -- is
+/// `GC.Gen.Run.FloatingGarbage`.

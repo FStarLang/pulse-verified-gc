@@ -16,8 +16,31 @@ open GC.Gen.Run.History
 open GC.Model.Represents
 open GC.Gen.Run.Simulation
 
+module U64 = FStar.UInt64
 module Ph = GC.Spec.Phase
 module I = GC.Model.Ideal
+
+/// The three facts about the real steps the id-level accounting uses
+/// (`GC.Gen.Run.Hoisted.Steps.step_hyps`: the nursery frames, the snapshot of
+/// a cycle start, what a minor collection promotes) hold.
+val step_hyps_hold (_: unit) : Lemma GC.Gen.Run.Hoisted.Steps.step_hyps
+
+/// **Idle, the objects with a block are those the accounting names**
+/// (`GC.Gen.Run.IdAccounting.live_ids`).
+val ids_at_idle (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
+                (ps: list I.program_event)
+  : Lemma (requires I.wf_program ps /\ executes rn ps /\ GC.Gen.Run.Hoisted.Steps.step_hyps /\ r.phase == Ph.Idle)
+          (ensures forall (id: I.obj_id). (exists (b: block_addr). ids_of_run rn b == Some id) <==>
+                                          GC.Gen.Run.IdAccounting.live_ids ps (kinds es) id)
+
+/// At every point of a run, the objects with a nursery block are the
+/// accounting's `nurs`.
+val nursery_ids (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
+                (ps: list I.program_event)
+  : Lemma (requires I.wf_program ps /\ executes rn ps)
+          (ensures forall (id: I.obj_id).
+                     (GC.Gen.Run.IdAccounting.account GC.Gen.Run.IdAccounting.empty_acc (kinds es) ps).GC.Gen.Run.IdAccounting.nurs id <==>
+                     (exists (o: U64.t). ids_of_run rn (Nursery o) == Some id))
 
 /// **The incremental run and its hoisted run are isomorphic** on every
 /// allocated block, whenever the incremental collector is idle.  The hoisted

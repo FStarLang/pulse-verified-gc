@@ -1923,6 +1923,44 @@ its size, tag and field.
 **Not done**: no SPOT builds a whole run of the cycle to `Idle` and applies
 `cycle_lossless` (that needs concrete mark steps to the hand-over).
 
+#### Floating garbage
+
+Snapshot-at-the-beginning keeps everything reachable when a cycle starts,
+so an object that becomes garbage during a cycle survives that cycle's
+sweep.  `GC.Gen.Run.FloatingGarbage` bounds how long, against the ideal
+run of `GC.Gen.Run.Simulation` (an object is its allocation index; it is
+garbage when it is not reachable from the program's roots there):
+
+- **Garbage stays garbage** (`garbage_stays_garbage`, ideal side): a
+  well-formed event never makes an unreachable object reachable again
+  (an allocation gets a fresh id and is initialised with values the
+  program can reach, a write stores such a value, new roots are such
+  values).
+- **Garbage is freed by the end of the next cycle**
+  (`floating_garbage_freed`): a point of a run is a run `rn1` that the rest
+  of the run `rn2` extends (`run_append rn1 rn2`); if object `id` exists
+  and is unreachable after the program events `rn1` carries out, and `rn2`
+  starts a cycle and ends idle, no block of the real memory holds `id`.
+- **It never comes back** (`gone_stays_gone`): once no block holds an
+  allocated object, no block holds it at any later point, idle or not,
+  whatever the schedule: a block gets an id only from an allocation (the
+  next id) or from a promotion (the id of the nursery block it copies).
+  `floating_garbage_bound` combines the two.
+
+So an object's block is freed by the end of the first complete cycle that
+starts after the object becomes unreachable: garbage lives at most the
+rest of the cycle in progress plus one full cycle.  The proof is
+address-free: the id-level account of `GC.Gen.Run.IdAccounting` drops the
+object from its kept set at the cycle's start (it is not reachable, and the
+nursery is empty when a cycle starts, `GC.Gen.Run.Hoisted.nursery_ids`);
+afterwards only fresh allocations and promoted nursery objects join; and
+idle, the objects with a block are exactly the account's
+(`GC.Gen.Run.Hoisted.ids_at_idle`).  The SPOT (`GC.SPOT.FloatingGarbage`)
+drops an object with `SetRoots`: on a schedule with no cycle afterwards the
+account still has it (floating), with one it is gone and the reachable
+object stays; it states both of every idle run that carries the program
+out on those schedules.  No SPOT builds such a run concretely.
+
 ## The minor collector
 
 The generational collector adds a nursery. The nursery is modeled separately
