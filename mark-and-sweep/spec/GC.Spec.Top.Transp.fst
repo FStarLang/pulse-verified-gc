@@ -252,8 +252,9 @@ let stuck (#c: comps) (x: config c) (ι: renaming) (re: revent) (es2: list event
   match re with
   | RAlloc false tag rvs ->
     if L.length rvs >= 1
-    then x.stopped == false /\ (exists (a b: nat). ends_with es2 (EMinor :: stw_tail a b)) /\
-         (let (_, _, r) = c.a.alloc x.ph x.w.cmaj x.ast (L.length rvs) tag in NoRoom? r)
+    then (x.stopped == false /\ (exists (a b: nat). ends_with es2 (EMinor :: stw_tail a b)) /\
+          (let (_, _, r) = c.a.alloc x.ph x.w.cmaj x.ast (L.length rvs) tag in NoRoom? r)) \/
+         (x.stopped == true /\ (exists (a b: nat). ends_with es2 (L.append (stw_tail a b) [EMinor])))
     else False
   | RAlloc true tag rvs ->
     if L.length rvs >= 1
@@ -305,11 +306,31 @@ let stw_replay (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (pr
     (m == L.length prog \/
      stuck (at c n ny es2 (L.length es2)) (ι2 (L.length es2)) (rev_at prog m) es2)
 
-/// **T1.**
+/// A reference value names a reachable object, if any.
+let rval_reach (r: rstore) (v: rval) : prop =
+  match v with
+  | RPtr k _ -> rreachable r k
+  | RWord _ -> True
+
+/// The event names only objects the program reaches from its roots.
+let names_reach (r: rstore) (e: revent) : prop =
+  match e with
+  | RAlloc _ _ vs -> forall (i: nat). i < L.length vs ==> rval_reach r (L.index vs i)
+  | RWrite k _ v -> rreachable r k /\ rval_reach r v
+  | RRead k _ -> rreachable r k
+  | RRoots rs -> forall (v: rval). L.memP v rs ==> rval_reach r v
+
+/// The program names only what it reaches (G53, §16.17): what OCaml's type
+/// safety gives a real program.  `gc_correct` keeps the broader `value_ok`.
+let names_reachable (prog: list revent) : prop =
+  forall (m: nat). m < L.length prog ==> names_reach (rat prog m) (rev_at prog m)
+
+/// **T1.**  Part 2 for programs that name only what they reach.
 let t1 (c: comps) (sty: style) : prop =
   components_ok c ==>
   (forall (n ny: nat) (es: list event).
      run_ok c sty n ny es /\ no_fail c n ny es ==>
      (exists (prog: list revent) (ι: nat -> renaming).
         transparent c n ny es prog ι /\
-        (forall (s j: nat). is_cycle es s j ==> stw_replay c sty n ny es s prog)))
+        (names_reachable prog ==>
+           (forall (s j: nat). is_cycle es s j ==> stw_replay c sty n ny es s prog))))

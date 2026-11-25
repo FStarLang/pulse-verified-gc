@@ -3165,8 +3165,8 @@ verified, 0 errors, 59 min; then the four T2 modules on top, 32 s.
 
 ### 16.15 T1: the statement
 
-`Top.Transp` (definitions only; typechecks at seeds 0, 1, 2; not
-in `ROOT_MODULES` until approved).
+`Top.Transp` (definitions only; in `ROOT_MODULES` through `Top.T1`,
+§16.18).
 - **Reference semantics.**  `rstore`: objects named by allocation order,
   never moved, freed or refused; `rval` = a word held as is, or `RPtr k d`
   (object `k`, infix offset `d`); `revent` = `RAlloc young tag vs`,
@@ -3196,12 +3196,16 @@ in `ROOT_MODULES` until approved).
     from the roots);
   - (S2) a young allocation with no room right after a minor collection
     (the nursery is then empty);
-  - (S3) a minor collection that runs out of room right after a whole
-    stop-the-world cycle.
+  - (S3) any allocation, major or young: a minor collection that runs
+    out of room right after a whole stop-the-world cycle.  (First coded
+    for young allocations only; extended to major ones, as approved,
+    2026-11-25: a major allocation's (S1) path runs a minor collection,
+    which may itself run out of room.)
 - **`t1_local`** (part 1, contracts at the steps): every run with
   `no_fail` is `transparent` for some `prog` and `ι`.
-- **`t1`** (both parts, under `components_ok`): part 1, and for every
-  cycle `s..j`, `stw_replay`: `take s es @ stw_tail a b @ q`, where `q`
+- **`t1`** (both parts, under `components_ok`): part 1, and, for a
+  program that names only what it reaches (`names_reachable`, §16.17),
+  for every cycle `s..j`, `stw_replay`: `take s es @ stw_tail a b @ q`, where `q`
   is a list of chunks (`chunk`, `flat`): program events, minor
   collections, and whole stop-the-world cycles (`stw_tail`), so the
   replay may collect whenever it needs room.  The replay is a run with
@@ -3210,7 +3214,8 @@ in `ROOT_MODULES` until approved).
   `stuck` (S1-S3) on event `m`.
 
 (Approved with the stop-the-world chunks and S1-S3, 2026-11-24; part 1
-proved, §16.16; part 2 open, gap G53 in §16.17.)
+proved, §16.16; gap G53 and its resolution in §16.17; part 2 proved,
+§16.18.)
 
 ### 16.16 T1, part 1: every run is transparent
 
@@ -3282,3 +3287,91 @@ and `Top.T1` (or `T1Run`'s successor) into `ROOT_MODULES`.
 | G53 | T1 part 2 (`stw_replay`); `Run.value_ok`, `mutator_ok_w` | `value_ok` asks only `reachable`/`yreachable`, which start from `outside_ref`: that includes major objects pointed to by *any* young block, also one the program dropped.  So a run may drop every root to young `y` (pointing to major `o`) and later name `o` again (`ERoots [VPtr (Major o)]`), legally, if it runs no minor collection in between.  The stop-the-world replay may need one in between: its allocator may refuse where the run's did not (other placement), and (S1) asks for a minor collection before the last cycle.  That drops `y`; `o` is then not reachable in the replay, the program's event is not `mutator_ok` there, and it is no allocation, so the replay is neither complete nor `stuck`.  `stw_replay` fails for some components meeting `components_ok`. | (A) The program may use only what it reaches from its roots: `value_ok` (and the `reachable`/`yreachable` of `mutator_ok_w`) by a program reachability from the roots through fields, major and young (a subset of `reachable`); re-proofs where step lemmas unfold `value_ok`, witness runs rechecked.  (B) A fourth stop for the replay (S4): before a program event that names a block the replay's collections dropped.  (C) Part 2 only for programs that name objects they reach: a hypothesis that every reference event names reference-reachable objects (`rok` with `rreachable`). |
 
 Part 1 is not affected: it already covers every visible block.
+
+**G53 resolved by (C) (user's choice, 2026-11-24).**  `Transp.t1` asks,
+for part 2 only, `names_reachable prog`: every reference event names only
+objects reachable in the reference store (`names_reach`, `rval_reach`).
+Real OCaml programs satisfy it: by type safety a program can only name a
+value it reaches from its own roots (registers, stack, globals) through
+fields; it has no way to obtain a pointer to an object only a dropped
+young object points to.  `gc_correct` keeps the broader `value_ok` (any
+`reachable` object): the collector is proved correct for every program
+the model allows, and T1 part 1 (`t1_local`) too.
+
+### 16.18 T1, part 2: the stop-the-world replay; T1 proved
+
+**Statement change (approved, 2026-11-25).**  `stuck` (S3) now covers a
+major allocation too: stopped, right after a whole cycle followed by a
+minor collection (it was coded for young allocations only, against the
+approved wording "any allocation").  A major allocation's (S1) path runs
+a minor collection, which may itself run out of room.
+
+**T1 proved: `t1 c sty` for every `c` and both styles (`T1.t1_ok`,
+`t1_both`, which also gives `t1_local`), no `requires`.**
+- `T1Re` (60): the store after `m + 1` events is one step from the store
+  after `m`; a prefix of the program runs the same stores; a legal
+  program's objects have a field (`rpos`, for the bound on a pointer).
+- `T1Tr` (344): a reference event on the replay's world.  A value is a
+  word as it is, or the renamed block's address plus the offset (`tv`).
+  Where the original run performed the event on the same reference
+  store (`wit`), the translation is legal and is the event renamed
+  (`tev_exists`): a pointer's offset stays good since both blocks hold
+  the same reference object, so have the same shape (`ocorr_shape`,
+  then `resolve_move`); a field can hold it (`rich`, the heap bounds).
+  The renamed event determines the reference event (`ev_unique`, from
+  `clean` and injectivity), and a renamed value list is unique
+  (`vlist_unique`, for (S2)).
+- `T1Ext` (422): a transparent run cut at a point, or as the prefix of a
+  longer run, stays transparent with the program so far (`tr_cut`,
+  `tr_pre`); it extends by collector events (`tr_coll_run`) and by a
+  program event that is the next reference event renamed (`tr_mut_step`,
+  part 1's step lemmas plus `ev_unique`).  The chunks: a whole cycle
+  from an idle configuration (`cyc_chunk`, by T2's `stw_build`), a minor
+  collection (`min_chunk`), a program event (`prog_chunk`); the event to
+  perform next (`trans_at`).
+- `T1Rep` (573): the replay.  It starts with `take s es` and T2's whole
+  cycle, then performs `prog`'s events in turn, idle and not stopped
+  between them (`lst`).  A plain event is performed.  A major allocation
+  is performed if the allocator gives room; otherwise a whole cycle and
+  a minor collection: out of room is (S3); then a whole cycle, and the
+  allocation is performed or refused (S1).  A young allocation is
+  performed if the nursery has room; otherwise a whole cycle and a minor
+  collection: out of room is (S3); then it is performed or (S2).  Each
+  event is one the original run performed (`good`, from part 1's
+  `tr_upto` on `es` and `names_reachable`).  `t1_run2`: both parts for
+  one run.
+- `T1` (80): `t1_ok`, `t1_both`.  The solver does not match `t1` against
+  the same formula stated elsewhere, so `T1` states it word for word
+  (`t1_body`) and proves `t1 == t1_body` by `trefl` (a tactic step, no
+  assumption).
+
+**No new gap.**  Changed: `Transp` (`names_reachable` and the hypothesis
+on part 2, §16.17; (S3) for major allocations).  `Top.T1` is in
+`ROOT_MODULES`.
+
+**Checking** (no `--retry`; the part 1 modules rechecked since `Transp`
+changed):
+
+| Module | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|
+| `Transp` | 2 s | 2 s | 2 s |
+| `TrRef` | 1 s | 1 s | 1 s |
+| `TrVis` | 5 s | 4 s | 4 s |
+| `TrGen` | 4 s | 5 s | 4 s |
+| `TrIP` | 4 s | 5 s | 4 s |
+| `TrEvA` | 13 s | 22 s | 5 s |
+| `TrEvB` | 85 s | 83 s | 81 s |
+| `TrEvC` | 73 s | 72 s | 65 s |
+| `TrEvD` | 52 s | 55 s | 50 s |
+| `TrMinA` | 3 s | 4 s | 3 s |
+| `TrMinB` | 10 s | 11 s | 11 s |
+| `T1Run` | 18 s | 18 s | 24 s |
+| `T1Re` | <1 s | 1 s | <1 s |
+| `T1Tr` | 10 s | 10 s | 13 s |
+| `T1Ext` | 17 s | 27 s | 18 s |
+| `T1Rep` | 16 s | 16 s | 16 s |
+| `T1` | 3 s | 2 s | 2 s |
+
+**The build.**  `gmake -j6 verify` from an empty `_cache` in a scratch
+worktree (default `--retry 3`, as CI): 527 cache files, 394 modules
+verified (all T1 modules among them), 0 errors, 80 min.
