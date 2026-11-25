@@ -85,7 +85,7 @@ val combined_reachable_edge_forwarded_normal (ph: gc_phase)
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom ph minor major fp roots /\
       (let cg = CG.build_combined_graph minor major free in
-       let combined_roots = CG.classify_roots minor roots in
+       let combined_roots = CG.classify_roots minor major roots in
        CG.combined_reachable cg combined_roots u /\
        CG.combined_reachable cg combined_roots w /\
        CG.mem_ce (u, w) cg) /\
@@ -100,7 +100,7 @@ val combined_reachable_edge_forwarded_normal (ph: gc_phase)
 let fwd_disjoint_reachable_major (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t) : prop =
   let cg = CG.build_combined_graph minor major free in
-  let combined_roots = CG.classify_roots minor roots in
+  let combined_roots = CG.classify_roots minor major roots in
   let prom = cheney_promote ph minor major fp roots in
   forall (x y: U64.t).
     CG.combined_reachable cg combined_roots (CG.MinorV x) /\
@@ -130,7 +130,7 @@ val minor_source_edge_not_no_scan (ph: gc_phase)
 let combined_reachable_normal_injective_prop (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t) : prop =
   let cg = CG.build_combined_graph minor major free in
-  let combined_roots = CG.classify_roots minor roots in
+  let combined_roots = CG.classify_roots minor major roots in
   let prom = cheney_promote ph minor major fp roots in
   forall (u w: CG.combined_vertex).
     CG.combined_reachable cg combined_roots u /\

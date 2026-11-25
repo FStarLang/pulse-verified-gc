@@ -29,9 +29,8 @@
 /// `cycle_sweep_write`.
 ///
 /// These are the per-event lemmas.  The theorem is stated of a run of the
-/// cycle, which fixes the snapshot (`GC.Gen.MarkPhase.Cycle` for marking,
-/// `GC.Gen.Cycle` for the whole cycle: `cycle_frees_unreachable`,
-/// `cycle_lossless`).
+/// cycle, which fixes the snapshot (`GC.Gen.Run.Invariant`: `cycle_lossless`,
+/// `cycle_survives`).
 
 module GC.Gen.MarkPhase.Completeness
 

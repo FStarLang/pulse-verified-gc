@@ -333,7 +333,14 @@ let spot_roots_valid_for_minor_collection (r: unit{ConcreteMajor.spot_major_room
       end
     end
   in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+  // Every root is an ordinary pointer, so the resolved (interior-pointer
+  // admitting) form of the precondition follows.
+  assert (MinorFwdHelpers.roots_valid_ordinary ConcreteMinor.spot_minor2 major
+            (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)));
+  spot_collection_heap_shape r;
+  MinorFwdHelpers.roots_valid_of_ordinary ConcreteMinor.spot_minor2 major
+    (ConcreteMajor.spot_major_fp r) (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
 #pop-options
 
 let spot_concrete_minor_collect_full_pre (r: unit{ConcreteMajor.spot_major_room})

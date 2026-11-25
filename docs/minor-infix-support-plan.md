@@ -635,7 +635,7 @@ The two entry obligations discharge as follows:
 `MCFH.resolve_roots result.mc_major roots_out`, and
 `GC.Gen.Impl.gen_gc_named_root_in_stack` reads the ordinary case back out: a
 root that resolves to itself is on the stack *literally*.  That is the shape the
-SPOTs consume, via `MajorPre.post_minor_major_root_valid` (for a major root) and
+SPOTs consume, via `MajorPre.post_minor_major_root_names_itself` (for a major root) and
 `MCFH.fwd_image_resolves` (for the promoted image of a non-interior nursery
 root).
 
@@ -693,6 +693,112 @@ byte-identical; the OCaml integration suite passes 2514 checks under both
 runtimes, including groups 8-12 (major->minor interior pointers, minor->minor
 interior pointers promoted together, 200 nursery groups anchored only by
 interior pointers, and 24 simultaneous interior-pointer roots).
+
+### Phase H.3 — interior major roots at a minor collection  ✅ **done**
+
+Phase H.2 left one raw clause behind: the *major* branch of
+`MCFH.roots_valid_for_minor_collection` (and of `roots_valid_with`, and
+`RBridge.roots_not_free`) still asked a non-nursery root to *be* a non-blue
+enumerated object.  Real OCaml violates that the moment a mutually recursive
+closure group is promoted: `g`'s entry point is still on the stack at the next
+minor collection, and it is an interior pointer into a major closure.  The C
+bridge (`scan_minor_root`) passes such a root straight to `minor_collect`, and
+`forward_if_minor` ignores it, so only the specification had to change; the
+extracted C is byte-identical.
+
+| Predicate | Before | After |
+|---|---|---|
+| `MCFH.roots_valid_for_minor_collection`, major branch | `is_val_addr r`, `r` enumerated, `~is_blue r` | `is_val_addr r`, `infix_addr_wf major objs r`, `resolve_object r major` enumerated and not blue |
+| `MCFH.roots_valid_with`, extra clause | `is_block major r /\ not (free major r)` | the same of `resolve_object r major` |
+| `RBridge.roots_not_free` | of `r` | of `resolve_object r major` |
+| `CG.classify_root` / `classify_roots` | `MajorV r` (no heap argument) | `MajorV (resolve_major_root major r)` (takes the major heap) |
+| `CG.classify_roots_inv_major` | `v` is a root | some non-nursery root names `v` |
+| `MajorPre.post_minor_major_root_valid` | the root names itself afterwards | the root names the same object afterwards (`post_minor_major_root_names_itself` keeps the old statement for an enumerated root) |
+
+`infix_addr_wf` is genuinely needed, not a convenience: it puts the root's infix
+header inside the live closure it names, which is what keeps the collection
+(promotion allocates into free blocks) from overwriting it.  For an ordinary
+pointer it is vacuous, and `MCFH.roots_valid_of_ordinary` derives the new form
+from the old one under the heap shape.
+
+The minor-collection theorems needed one new hypothesis on the image
+direction, `MCFH.major_roots_named` (implied by `roots_valid_with`), and one new
+lemma, `major_root_still_names` in `GC.Gen.MinorCollectForwarding`, built on
+`MCFE.cheney_collect_frame_target_header`.  `gen_gc`'s published postcondition
+did not change: it was already stated over the resolved roots.
+
+`spot/GC.SPOT.MajorInfixRoot` audits it on `GC.SPOT.InfixMajor`'s heap with
+the root set `[H]`, `H` an interior pointer into the closure `P`: the old
+predicate rejects it, the new one and `gen_gc_pre` accept it, it classifies as
+`MajorV P`, and after the minor collection it is unchanged, still names `P` and
+is darkenable.
+
+### Phase H.4 — interior major pointers in nursery fields  ✅ **done**
+
+Phase H.3 resolved the major *roots* of a minor collection; one raw clause was
+left in the heap shape itself.  The cross-generation clauses of
+`GC.Gen.HeapInvariant` --- `minor_major_fields_not_free` (35 files of users)
+and its stop-the-world form `minor_major_fields_no_blue` --- asked a major
+pointer stored in a nursery field to *be* a non-free block.  Real OCaml
+violates that as soon as a record or a closure environment allocated after a
+`let rec f .. and g ..` group was promoted is assigned `g`: the field is an
+interior pointer into the major closure.  The run model carried the matching
+trusted restriction (`GC.Gen.Run.Step.nursery_storable` forbade storing a major
+infix pointer into a scannable nursery object, and `nursery_trusted` assumed
+it).  The collector itself never looks at such a word except to copy it
+(`forward_if_minor` ignores a major value), so only the specification had to
+change; the extracted C is byte-identical.
+
+| Predicate | Before | After |
+|---|---|---|
+| `GenInv.minor_major_fields_not_free free` | the field `v` is `in_use free` | `in_use free (resolve_object v major)` and `infix_addr_wf major objs v` (exactly `SPI.storable free major v`) |
+| `GenInv.minor_major_fields_no_blue` | `v` enumerated and not blue | `infix_addr_wf major objs v`, `resolve_object v major` enumerated and not blue |
+| `CG.classify_minor_field`, major branch | `MajorV v` when `v` is enumerated | `MajorV (resolve_object v major)` when that is enumerated (as `classify_major_field`) |
+| `CG.classify_minor_field_major` / `_inv_major` | `v == x` | `x == resolve_object v major` (`_raw` variants keep the old statements for a non-interior `v`) |
+| `GMM.nursery_refs` | `nursery_refs minor w`: some field *is* `w` | `nursery_refs minor g w`: some field *names* `w` in `g`; `GI.phase_shape`'s marking invariant uses `nursery_refs minor g` |
+| `MCFE.promoted_minor_major_field_preserved` | the copy's field reads `dst` | it reads the raw nursery word `ov`, which names `dst` in the heap after |
+| `GMA.fresh_shape` | `minor_major_fields_not_free free_stw` | `... (MPA.free_or_new obj)`: the nursery names no block but the non-free ones other than the fresh `obj` |
+| `S.darker` (mark slices) | resolutions kept | and a well-formed interior pointer stays well formed |
+| `SPI.storable_transfer` | storable stays storable | and resolves to the same block (new: `storable_transfer_blocks`, for a change that may recolour) |
+| `Step.nursery_storable` | `storable_value` and not a major infix pointer | `storable_value` |
+| `Enabled.nursery_trusted` | the frame and no major infix pointer stored | the frame |
+
+`infix_addr_wf` is needed for the same reason as in Phase H.3: it puts the
+infix header inside the live closure the field names, which is what keeps it
+in place across everything that changes the major heap --- promotion
+(`Frame.cheney_promote_frame_target_header`), the pointer update
+(`MCFE.cheney_collect_frame_target_header`), allocation and program writes
+(which touch free blocks, or the body of a block that is not a closure:
+`SPI.heads_kept`), sweeping and marking (which only recolour:
+`SPI.storable_transfer_blocks`, `GenInv.minor_major_fields_not_free_recolour`).
+The new lemmas that carry the clause and what the nursery names across such
+changes are `GenInv.minor_major_fields_not_free_{transfer,transfer_blocks,
+recolour,weaken}` and `GMM.nursery_refs_{transfer,transfer_storable,
+transfer_blocks,colour}` and `GMM.write_keeps_nursery`.  For an ordinary
+pointer the new clause is the old one (`minor_major_fields_not_free_ordinary`,
+`minor_major_fields_not_free_intro_ordinary`).
+
+The marking phase needed the one real design decision: what the nursery
+references from outside the major heap is the block a field *names*, and that
+depends on the major heap, so `nursery_refs` takes it.  Every event that
+changes the major heap while marking (a mark move, the deletion barrier, an
+allocation and its initialising writes) keeps every such resolution, which is
+how the marking invariant with `nursery_refs minor g` is carried to
+`nursery_refs minor g'`.
+
+No Pulse signature changed textually; `gen_gc`'s and the entry points'
+pre/postconditions mention the changed predicates only through
+`collection_heap_shape` / `GI.phase_shape`, which now accept more heaps.
+
+`spot/GC.SPOT.NurseryInfixField` audits it on `GC.SPOT.InfixMajor`'s heap
+with a nursery of a zero filler and a one-field block `N` at the top whose field
+is `H`, an interior pointer into the closure `P`: the old raw clause rejects
+it, the new one and `collection_heap_shape` accept it, the combined graph has
+the edge `N -> P`, and a minor collection with root `N` that promotes it leaves
+the copy's field holding `H`, still naming `P`, with the heap-graph edge from
+the copy to `P`.  (`N` is placed in the last nursery words because
+`minor_guards_complete` reads every word as a would-be header, and the bits of
+a major address are not fixed by the abstract layout.)
 
 ### Phase E — delete the restrictions  ✅ **done**
 

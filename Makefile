@@ -109,7 +109,6 @@ ROOT_MODULES = \
   generational/spec/GC.Gen.SweepPhase.Minor.fst \
   generational/spec/GC.Gen.SweepPhase.Safety.fst \
   generational/spec/GC.Gen.SweepPhase.Completeness.fst \
-  generational/spec/GC.Gen.SweepPhase.Cycle.fst \
   mark-and-sweep/spec/GC.Spec.SweepPhase.Completeness.fst \
   mark-and-sweep/spec/GC.Spec.SweepPhase.Intrinsic.End.fst \
   mark-and-sweep/spec/GC.Spec.MarkPhase.fst \
@@ -121,8 +120,21 @@ ROOT_MODULES = \
   generational/spec/GC.Gen.MarkPhase.Completeness.fst \
   generational/spec/GC.Gen.MarkPhase.Safety.fst \
   generational/spec/GC.Gen.MarkPhase.Walk.fst \
-  generational/spec/GC.Gen.MarkPhase.Cycle.fst \
-  generational/spec/GC.Gen.Cycle.fst \
+  generational/spec/GC.Gen.Run.Simulation.fsti \
+  generational/spec/GC.Gen.Run.Simulation.fst \
+  generational/spec/GC.Gen.Run.Simulation.Enabled.fsti \
+  generational/spec/GC.Gen.Run.Simulation.Enabled.fst \
+  generational/spec/GC.Gen.Run.Simulation.Frame.fst \
+  generational/spec/GC.Gen.Run.Simulation.Alloc.fst \
+  generational/spec/GC.Gen.Run.Simulation.Steps.fst \
+  generational/spec/GC.Gen.Run.Simulation.Collector.fsti \
+  generational/spec/GC.Gen.Run.Simulation.Collector.fst \
+  generational/spec/GC.Gen.Run.Simulation.Minor.fsti \
+  generational/spec/GC.Gen.Run.Simulation.Minor.fst \
+  generational/spec/GC.Gen.Run.Hoisted.fsti \
+  generational/spec/GC.Gen.Run.Hoisted.fst \
+  generational/spec/GC.Gen.Cheney.Soundness.fsti \
+  generational/spec/GC.Gen.Cheney.Soundness.fst \
   mark-and-sweep/impl/GC.Impl.Correct.fst \
   mark-and-sweep/spec/GC.Spec.FreeLists.Push.fst \
   mark-and-sweep/spec/GC.Spec.Pages.Init.fst \
@@ -402,7 +414,7 @@ DEPGRAPH_THEOREM_ROOTS = \
   GC.Spec.Correctness GC.Spec.MarkBoundedCorrectness GC.Gen.CheneyCorrectness \
   GC.Impl.MarkBoundedRootLemmas GC.Spec.FusedSweep.Facts \
   GC.Gen.SweepPhase GC.Gen.SweepPhase.Minor GC.Gen.SweepPhase.Safety GC.Spec.SweepPhase.Intrinsic.End \
-  GC.Impl.Correct
+  GC.Impl.Correct GC.Gen.Run.Simulation GC.Gen.Run.Simulation.Enabled GC.Gen.Run.Simulation.Frame GC.Gen.Run.Simulation.Collector GC.Gen.Run.Simulation.Minor GC.Gen.Run.Hoisted GC.Gen.Cheney.Soundness
 
 DEPGRAPH_SPOT_ROOTS = $(sort $(basename $(notdir $(wildcard spot/GC.SPOT.*.fst))))
 

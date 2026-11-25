@@ -10,7 +10,7 @@
 /// after, with the same header, and the only other non-free blocks after are
 /// promoted copies (`GC.Gen.SweepPhase.Minor.minor_keeps_blocks`); and the
 /// walk ends where it did (`GC.Gen.SweepPhase.Minor.minor_keeps_walk_end`).
-/// A run of the sweep phase (`GC.Gen.SweepPhase.Cycle`) counts as new the
+/// A run of the cycle (`GC.Gen.Run.Invariant`) counts as new the
 /// blocks the collection made non-free (`with_made`), which are its promoted
 /// copies (`made_by_minor_promoted`); with them the collection keeps the
 /// account (`survivor_or_new_minor_made`) and its converse, that only space

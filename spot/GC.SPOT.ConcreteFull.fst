@@ -116,7 +116,8 @@ let post_roots_mem_c
   // after the minor collection, so the prepared root objects hold it literally.
   ConcreteScenarios.spot_collection_heap_shape r;
   ConcreteScenarios.spot_roots_valid_for_minor_collection r;
-  MajorPre.post_minor_major_root_valid
+  ConcreteMajor.spot_major_c_mem r;
+  MajorPre.post_minor_major_root_names_itself
     ConcreteMinor.spot_minor2
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)

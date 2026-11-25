@@ -67,6 +67,16 @@ let remembered_targets_in_roots
   forall (r: U64.t).
     Seq.mem r (remembered_slot_targets major slots n) ==> Seq.mem r roots
 
+/// A remembered slot holding a nursery pointer contributes its target.
+val remembered_slot_targets_mem (major: heap) (slots: seq U64.t) (n: nat) (i: nat)
+  : Lemma
+    (requires i < n /\ i < Seq.length slots /\
+              U64.v (Seq.index slots i) < heap_size /\
+              U64.v (Seq.index slots i) % U64.v mword == 0 /\
+              is_minor_pointer (to_minor_offset (read_word major (Seq.index slots i <: hp_addr))))
+    (ensures Seq.mem (to_minor_offset (read_word major (Seq.index slots i <: hp_addr)))
+               (remembered_slot_targets major slots n))
+
 val remembered_targets_in_roots_intro_by_slots:
   major:heap ->
   roots:seq U64.t ->
@@ -85,14 +95,23 @@ val remembered_targets_in_roots_intro_by_slots:
 #push-options "--z3rlimit 10"
 /// Root validity needed to make the target be all concrete post-reachable
 /// vertices: a minor-shaped root must *resolve* to a real live minor object,
-/// while a non-minor root must be an allocated major object.
+/// while a non-minor root must *name* an allocated major object.
 ///
-/// The minor branch is stated on `resolve_minor minor r` rather than on `r`
-/// itself so that an **interior** nursery root is admissible: OCaml pushes the
-/// entry point of a non-first function of a mutually recursive group directly
-/// (`runtime/interp.c:601`) and the byte-code root scanner walks such stack
-/// slots verbatim (`runtime/roots_byt.c:39`).  For a non-interior root
-/// `resolve_minor` is the identity, so this is a genuine weakening.
+/// Both branches are stated on the root's resolution rather than on the root
+/// itself, so that an **interior** root is admissible in either generation:
+/// OCaml pushes the entry point of a non-first function of a mutually
+/// recursive group directly (`runtime/interp.c:601`) and the byte-code root
+/// scanner walks such stack slots verbatim (`runtime/roots_byt.c:39`).  The
+/// group is allocated in the nursery, and once it has been promoted the same
+/// stack slot is an interior pointer into a *major* closure at the next minor
+/// collection.  For a non-interior root both resolutions are the identity.
+///
+/// A major interior root must moreover be a well-formed one
+/// (`infix_addr_wf`, which is vacuous for an ordinary pointer): its infix
+/// header lies inside the enclosing closure, so the collection --- which
+/// leaves a live closure's non-pointer words alone --- cannot disturb it, and
+/// the root still names the same closure afterwards.  Without the bound the
+/// "header" could sit in a free block that promotion allocates into.
 let roots_valid_for_minor_collection
   (minor: minor_state) (major: heap) (roots: seq U64.t) : prop =
   forall (r: U64.t).
@@ -101,17 +120,20 @@ let roots_valid_for_minor_collection
       Seq.mem (resolve_minor minor r) (minor_objects minor) /\
       minor_wosize minor (resolve_minor minor r) > 0) /\
      (~(is_minor_pointer r) ==>
-     is_val_addr r /\ Seq.mem (r <: obj_addr) (objects zero_addr major) /\
-     ~(is_blue (r <: obj_addr) major)))
+     is_val_addr r /\
+     infix_addr_wf major (objects zero_addr major) (r <: obj_addr) /\
+     Seq.mem (resolve_object (r <: obj_addr) major) (objects zero_addr major) /\
+     ~(is_blue (resolve_object (r <: obj_addr) major) major)))
 #pop-options
 
-/// The same for any definition of free: a non-minor root is a non-free block.  (A root is
-/// reachable, so it is never garbage left in place.)
+/// The same for any definition of free: the block a non-minor root names is
+/// non-free.  (A root is reachable, so it is never garbage left in place.)
 let roots_valid_with
   (free: free_def) (minor: minor_state) (major: heap) (roots: seq U64.t) : prop =
   roots_valid_for_minor_collection minor major roots /\
   (forall (r: U64.t). Seq.mem r roots /\ ~(is_minor_pointer r) /\ is_val_addr r ==>
-     is_block major (r <: obj_addr) /\ not (free major (r <: obj_addr)))
+     is_block major (resolve_object (r <: obj_addr) major) /\
+     not (free major (resolve_object (r <: obj_addr) major)))
 
 val roots_valid_with_stw
   (minor: minor_state) (major: heap) (roots: seq U64.t)
@@ -125,6 +147,62 @@ val roots_valid_with_implies_not_free
   : Lemma
     (requires roots_valid_with free minor major roots)
     (ensures RBridge.roots_not_free free roots major)
+
+/// The shape a major interior root must have, on its own: it is well formed and
+/// names a non-blue enumerated object.  This is what keeps a major root naming
+/// the same object across the collection
+/// (`MinorCollectForwarding.Edges.cheney_collect_frame_target_header`).
+let major_roots_named (major: heap) (roots: seq U64.t) : prop =
+  forall (r: U64.t).
+    Seq.mem r roots /\ ~(is_minor_pointer r) /\ is_val_addr r ==>
+    infix_addr_wf major (objects zero_addr major) (r <: obj_addr) /\
+    Seq.mem (resolve_object (r <: obj_addr) major) (objects zero_addr major) /\
+    ~(is_blue (resolve_object (r <: obj_addr) major) major)
+
+val roots_valid_with_implies_named
+  (free: free_def) (minor: minor_state) (major: heap) (roots: seq U64.t)
+  : Lemma
+    (requires roots_valid_with free minor major roots)
+    (ensures major_roots_named major roots)
+
+/// The ordinary case of the major branch of `roots_valid_for_minor_collection`:
+/// a non-blue enumerated object of a heap with no infix block names itself,
+/// and is trivially a well-formed (non-interior) pointer.
+val major_root_valid_of_object (major: heap) (r: obj_addr)
+  : Lemma (requires no_infix_block major /\
+                    Seq.mem r (objects zero_addr major) /\ ~(is_blue r major))
+          (ensures infix_addr_wf major (objects zero_addr major) r /\
+                   resolve_object r major == r /\
+                   Seq.mem (resolve_object r major) (objects zero_addr major) /\
+                   ~(is_blue (resolve_object r major) major))
+
+/// Every root an ordinary pointer: the pre-Phase-H form of
+/// `roots_valid_for_minor_collection`, where a non-nursery root is itself a
+/// non-blue enumerated object.  It implies the resolved form.
+let roots_valid_ordinary
+  (minor: minor_state) (major: heap) (roots: seq U64.t) : prop =
+  forall (r: U64.t).
+    Seq.mem r roots ==>
+    ((is_minor_pointer r ==>
+      Seq.mem (resolve_minor minor r) (minor_objects minor) /\
+      minor_wosize minor (resolve_minor minor r) > 0) /\
+     (~(is_minor_pointer r) ==>
+      is_val_addr r /\ Seq.mem (r <: obj_addr) (objects zero_addr major) /\
+      ~(is_blue (r <: obj_addr) major)))
+
+val roots_valid_of_ordinary
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires GenInv.collection_heap_shape minor major fp /\
+                    roots_valid_ordinary minor major roots)
+          (ensures roots_valid_for_minor_collection minor major roots)
+
+/// A value that names an enumerated object is a pointer field, and its graph
+/// resolution is that object.  (Resolution never moves an address upwards, and
+/// enumerated objects lie above `zero_addr`.)
+val named_root_is_pointer_field (g: heap) (r: obj_addr)
+  : Lemma (requires Seq.mem (resolve_object r g) (objects zero_addr g))
+          (ensures HeapGraph.is_pointer_field r /\
+                   HeapGraph.resolve_field g r == resolve_object r g)
 
 /// Raw-address view of graph-edge membership, useful when the endpoint is a
 /// forwarding-map image whose `hp_addr` refinement is proved by preconditions.
@@ -269,6 +347,24 @@ val update_preserves_major_target_field
       blocks_fit major /\
       Seq.mem src (objects zero_addr major) /\
       Seq.mem dst (objects zero_addr major) /\
+      j < U64.v (wosize_of_object src major) /\
+      U64.v src + j * 8 + 8 <= heap_size /\
+      (U64.v src + j * 8) % 8 == 0 /\
+      is_no_scan src major = false /\
+      read_word major (U64.uint_to_t (U64.v src + j * 8)) == dst)
+    (ensures
+      read_word (update_walk major upd fwd)
+        (U64.uint_to_t (U64.v src + j * 8)) == dst)
+
+/// ... and so is a field that *names* a major object through an interior
+/// pointer: it lies above the object it resolves to, so above the nursery.
+val update_preserves_major_named_field
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (src dst: obj_addr) (j: nat)
+  : Lemma
+    (requires
+      blocks_fit major /\
+      Seq.mem src (objects zero_addr major) /\
+      Seq.mem (resolve_object dst major) (objects zero_addr major) /\
       j < U64.v (wosize_of_object src major) /\
       U64.v src + j * 8 + 8 <= heap_size /\
       (U64.v src + j * 8) % 8 == 0 /\
@@ -575,7 +671,7 @@ let normal_src_reachable (ph: gc_phase)
   (minor: minor_state) (major: heap) (fp: U64.t) (free: free_def) (roots: seq U64.t)
   (u: CG.combined_vertex) : prop =
   let cg = CG.build_combined_graph minor major free in
-  let combined_roots = CG.classify_roots minor roots in
+  let combined_roots = CG.classify_roots minor major roots in
   CG.combined_reachable cg combined_roots u /\
   normal_vertex_ready ph minor major fp roots u
 

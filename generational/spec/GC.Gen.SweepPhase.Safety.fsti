@@ -65,7 +65,7 @@ val reachable_not_free_combined (minor: minor_state) (g: heap) (fp: U64.t) (c: U
                     GenInv.minor_major_fields_not_free (free_incremental c) minor g /\
                     RBridge.roots_not_free (free_incremental c) roots g /\
                     CG.combined_reachable (CG.build_combined_graph minor g (free_incremental c))
-                      (CG.classify_roots minor roots) (CG.MajorV a))
+                      (CG.classify_roots minor g roots) (CG.MajorV a))
           (ensures is_obj a /\ in_use (free_incremental c) g (a <: obj_addr))
 
 /// **A sweep step never frees a reachable object**, and leaves its size, tag

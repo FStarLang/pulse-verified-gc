@@ -95,6 +95,8 @@ SPOT_SRC = \
   GC.SPOT.InfixPre.fst \
   GC.SPOT.InfixPost.fsti \
   GC.SPOT.InfixPost.fst \
+  GC.SPOT.MajorInfixRoot.fst \
+  GC.SPOT.NurseryInfixField.fst \
   GC.SPOT.InfixCall.fsti \
   GC.SPOT.InfixCall.fst \
   GC.SPOT.MinorInfix.fsti \
@@ -115,7 +117,6 @@ SPOT_SRC = \
   GC.SPOT.FusedSweepSteps.fst \
   GC.SPOT.SweepPhasePendingFree.fst \
   GC.SPOT.SweepPhaseFreedByEnd.fst \
-  GC.SPOT.SweepPhaseCycleAlloc.fst \
   GC.SPOT.IncrementalCycle.fst \
   GC.SPOT.MarkPhaseHeap.fsti \
   GC.SPOT.MarkPhaseHeap.fst \
@@ -126,9 +127,9 @@ SPOT_SRC = \
   GC.SPOT.WriteBarrier.fst \
   GC.SPOT.CycleHeap.fst \
   GC.SPOT.IncrementalCycleTheorems.fst \
-  GC.SPOT.MarkPhaseCycleAlloc.fst \
   GC.SPOT.GcCorrect.fsti \
-  GC.SPOT.GcCorrect.fst
+  GC.SPOT.GcCorrect.fst \
+  GC.SPOT.MutatorRun.fst
 
 # All checked files land in one shared cache, so targets are derived from the
 # module file name alone.

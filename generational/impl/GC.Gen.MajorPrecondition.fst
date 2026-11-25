@@ -154,7 +154,8 @@ let post_minor_minor_root_valid
 #pop-options
 
 /// A non-minor root.  `rewrite_root` leaves it alone, so all that is needed is
-/// that a pre-existing non-blue object stays a non-blue object.
+/// that the object it names --- through an interior pointer, possibly --- stays
+/// a non-blue object, and that the root still names it.
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let post_minor_major_root_valid minor major fp roots r
   =
@@ -166,19 +167,38 @@ let post_minor_major_root_valid minor major fp roots r
   let result = Cheney.cheney_collect_spec minor major fp roots in
   assert (Promote.rewrite_root r prom.fwd_map == r);
   assert (is_val_addr r);
-  assert (Seq.mem (r <: obj_addr) (SpecFields.objects zero_addr major));
+  let ro : obj_addr = r in
+  let p = SpecObj.resolve_object ro major in
+  assert (SpecObj.infix_addr_wf major (SpecFields.objects zero_addr major) ro);
+  assert (Seq.mem p (SpecFields.objects zero_addr major));
+  assert (SpecObj.is_blue p major = false);
+  // The root keeps naming `p`: its header (an infix header inside the live
+  // closure `p`, or `p`'s own) is untouched by the collection.
+  GC.Gen.MinorCollectForwarding.stop_the_world_context minor major fp roots;
+  GC.Gen.CheneyGeneric.cheney_collect_spec_with_stw minor major fp roots;
+  GC.Gen.MinorCollectForwarding.Edges.cheney_collect_frame_target_header
+    Idle minor major fp SpecFields.free_stw roots ro;
+  assert (SpecObj.resolve_object ro result.mc_major == p);
+  // `p` stays an object, and keeps its (non-blue) header.
   CheneyCorr.cheney_collect_preserves_objects Idle minor major fp SpecFields.free_stw roots;
-  CheneyFrame.cheney_promote_frame_old_header Idle minor major fp roots r;
+  CheneyFrame.cheney_promote_frame_old_header Idle minor major fp roots p;
   CheneySteps.cheney_promote_preserves_wfh_part1 Idle minor major fp roots;
   PromUpd.update_walk_preserves_objects prom.major_final (SpecFields.in_use SpecFields.free_stw prom.major_final) prom.fwd_map;
-  PromUpd.update_walk_preserves_header prom.major_final (SpecFields.in_use SpecFields.free_stw prom.major_final) prom.fwd_map r;
-  SpecObj.color_of_header_eq r major result.mc_major;
-  SpecFields.objects_addresses_gt_start zero_addr major r;
+  PromUpd.update_walk_preserves_header prom.major_final (SpecFields.in_use SpecFields.free_stw prom.major_final) prom.fwd_map p;
+  SpecObj.color_of_header_eq p major result.mc_major;
+  GC.Gen.ReachabilityBridge.resolved_in_objects_is_pointer major ro
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let post_minor_major_root_names_itself minor major fp roots r
+  =
+  GenInv.collection_heap_shape_elim minor major fp;
+  GenInv.major_heap_shape_elim major fp;
+  post_minor_major_root_valid minor major fp roots r;
   // A major root is an enumerated object, and well-formedness forbids an
   // enumerated object from carrying an infix header, so it names itself.
   SpecFields.wf_objects_non_infix major (r <: obj_addr);
-  SpecObj.resolve_object_locality (r <: obj_addr) major result.mc_major;
-  SpecObj.resolve_non_infix (r <: obj_addr) result.mc_major
+  SpecObj.resolve_non_infix (r <: obj_addr) major
 #pop-options
 
 /// `Seq` exposes `index_mem` (mem to index) but not its converse.

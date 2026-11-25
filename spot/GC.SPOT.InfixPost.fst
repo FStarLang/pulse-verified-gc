@@ -80,7 +80,8 @@ private let post_roots_mem_q
   // literally, not merely up to resolution.
   InfixPre.spot_infix_collection_heap_shape r;
   InfixPre.spot_infix_roots_valid r;
-  MajorPre.post_minor_major_root_valid
+  InfixMajor.spot_infix_mem r;
+  MajorPre.post_minor_major_root_names_itself
     InfixPre.spot_infix_minor (InfixMajor.spot_infix_heap r)
     (InfixMajor.spot_infix_fp r) roots (q <: U64.t);
   GenImpl.gen_gc_named_root_in_stack

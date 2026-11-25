@@ -73,7 +73,7 @@ let is_young (v: U64.t) : GTot bool = Promote.is_minor_pointer (GB.to_minor_offs
 let modify_ok (ph: Ph.gc_phase) (minor: minor_state) (g: heap) (sp: MP.scan_pos)
     (x: obj_addr) (a: hp_addr) (v: U64.t) : prop =
   SPM.program_write (GI.phase_free ph) g x a v /\ scannable g x /\
-  (Ph.Marking? ph ==> MM.target_ok g (GMM.nursery_refs minor) sp v)
+  (Ph.Marking? ph ==> MM.target_ok g (GMM.nursery_refs minor g) sp v)
 
 /// The heap after the barrier: while marking, the old value darkened
 /// (`MM.darken`, 4.14's `caml_darken`) and then the write; at any other

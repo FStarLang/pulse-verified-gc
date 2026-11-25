@@ -76,12 +76,12 @@ checked = $(addprefix $(CACHE_DIR)/,$(addsuffix .checked,$(notdir $(1))))
 # GC.Gen.SweepPhase.Minor (a minor collection mid-sweep) and
 # GC.Gen.SweepPhase.Safety (safety over the sweep phase) and
 # GC.Gen.SweepPhase.Completeness (a minor collection mid-sweep, for the sweep
-# phase's completeness) and GC.Gen.SweepPhase.Cycle (a run of the sweep phase,
-# and what it frees) are theorems about it, as are GC.Gen.MarkPhase.Cycle (a
-# run of the marking phase) and GC.Gen.Cycle (a run of the whole cycle); the
-# first two are also reached through it, Safety, Completeness and the runs
-# only as roots.
-ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst impl/GC.Gen.Impl.Barrier.fsti impl/GC.Gen.Impl.Barrier.fst spec/GC.Gen.SweepPhase.fst spec/GC.Gen.SweepPhase.Minor.fst spec/GC.Gen.SweepPhase.Safety.fst spec/GC.Gen.SweepPhase.Completeness.fst spec/GC.Gen.SweepPhase.Cycle.fst spec/GC.Gen.MarkPhase.Alloc.fst spec/GC.Gen.MarkPhase.Completeness.fst spec/GC.Gen.MarkPhase.Safety.fst spec/GC.Gen.MarkPhase.Cycle.fst spec/GC.Gen.Cycle.fst
+# phase's completeness) are theorems about it; the first two are also reached
+# through it, Safety and Completeness only as roots; GC.Gen.Run.Simulation
+# (mutator equivalence, which reaches GC.Gen.Run.Invariant, the theorems of a
+# run of the whole cycle), GC.Gen.Cheney.Soundness (what a minor collection
+# forwards, for it) and GC.Gen.Run.Hoisted (the hoisted run) are roots too.
+ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst impl/GC.Gen.Impl.Barrier.fsti impl/GC.Gen.Impl.Barrier.fst spec/GC.Gen.SweepPhase.fst spec/GC.Gen.SweepPhase.Minor.fst spec/GC.Gen.SweepPhase.Safety.fst spec/GC.Gen.SweepPhase.Completeness.fst spec/GC.Gen.MarkPhase.Alloc.fst spec/GC.Gen.MarkPhase.Completeness.fst spec/GC.Gen.MarkPhase.Safety.fst spec/GC.Gen.Run.Simulation.fsti spec/GC.Gen.Run.Simulation.fst spec/GC.Gen.Run.Simulation.Enabled.fsti spec/GC.Gen.Run.Simulation.Enabled.fst spec/GC.Gen.Run.Simulation.Frame.fst spec/GC.Gen.Run.Simulation.Alloc.fst spec/GC.Gen.Run.Simulation.Steps.fst spec/GC.Gen.Run.Simulation.Collector.fsti spec/GC.Gen.Run.Simulation.Collector.fst spec/GC.Gen.Run.Simulation.Minor.fsti spec/GC.Gen.Run.Simulation.Minor.fst spec/GC.Gen.Cheney.Soundness.fsti spec/GC.Gen.Cheney.Soundness.fst spec/GC.Gen.Run.Hoisted.fsti spec/GC.Gen.Run.Hoisted.fst
 ROOT_CHECKED = $(call checked,$(ROOT_SRC))
 ALL_CHECKED  = $(call checked,$(ALL_SRC))
 

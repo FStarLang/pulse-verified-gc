@@ -178,7 +178,8 @@ val mark_steps_inv (g g': heap) (sp sp': MP.scan_pos) (outside_refs: obj_addr ->
           (ensures MP.marking_inv g' outside_refs sp')
 
 /// `g'` is `g` with some blocks darker: the same walk, headers but for their
-/// colours, fields and resolutions; free blocks stay free and nothing else
+/// colours, fields and resolutions (a well-formed interior pointer stays well
+/// formed); free blocks stay free and nothing else
 /// becomes free; nothing becomes white, grey blocks stay grey or turn black,
 /// and black ones stay black.
 let darker (g g': heap) : prop =
@@ -200,7 +201,9 @@ let darker (g g': heap) : prop =
   (forall (y: obj_addr) (k: U64.t{U64.v k >= 1}). {:pattern (HG.get_field g' y k)}
      Seq.mem y (objects zero_addr g) /\ U64.v k <= U64.v (wosize_of_object y g) ==>
      HG.get_field g' y k == HG.get_field g y k) /\
-  (forall (v: obj_addr). {:pattern (resolve_object v g')} resolve_object v g' == resolve_object v g)
+  (forall (v: obj_addr). {:pattern (resolve_object v g')} resolve_object v g' == resolve_object v g) /\
+  (forall (v: obj_addr). {:pattern (infix_addr_wf g' (objects zero_addr g') v)}
+     infix_addr_wf g (objects zero_addr g) v ==> infix_addr_wf g' (objects zero_addr g') v)
 
 val darker_refl (g: heap) : Lemma (requires well_formed_heap g) (ensures darker g g)
 

@@ -842,6 +842,47 @@ static void scan_minor_root(value root, value *root_ptr) {
     root_count++;
 }
 
+#ifdef DEBUG
+/* Debug-only audit of what the verified minor_collect asks of a root that is
+ * not a nursery offset (GC.Gen.MinorCollectForwarding.Helpers.
+ * roots_valid_for_minor_collection): it must *name* a live major block --
+ * either the block itself, or an interior pointer into a closure (the entry
+ * point of a non-first function of a promoted `let rec ... and ...`), whose
+ * Infix_tag header encodes the offset back to the enclosing closure
+ * (Infix_offset_hd = Wosize_hd * sizeof(value)) and lies inside it.
+ *
+ * Only roots inside the verified major heap are audited.  A value outside it
+ * (native code's static data, for instance) is passed through by
+ * scan_minor_root untouched; the verified code never dereferences it, but it
+ * is outside what the specification covers.  Compiled out of release
+ * builds. */
+static void debug_check_major_roots(void) {
+    size_t i;
+    for (i = 0; i < root_count; i++) {
+        uint64_t r = root_values[i];
+        header_t hd;
+        if (r < minor_heap_size_u64) continue;              /* nursery offset */
+        if (r < zero_addr + 8 || r >= heap_size_u64) continue; /* not ours */
+        CAMLassert(r % 8 == 0);
+        hd = *(header_t *)(uintptr_t)(r - 8);
+        if (Tag_hd(hd) == Infix_tag) {
+            uint64_t off = (uint64_t)Wosize_hd(hd) * 8;
+            uint64_t p = r - off;
+            header_t phd;
+            CAMLassert(Wosize_hd(hd) >= 2);
+            CAMLassert(p >= zero_addr + 8 && p < r);
+            phd = *(header_t *)(uintptr_t)(p - 8);
+            CAMLassert(Tag_hd(phd) == Closure_tag);
+            CAMLassert(r < p + (uint64_t)Wosize_hd(phd) * 8);
+            hd = phd;
+        }
+        CAMLassert(Tag_hd(hd) != Infix_tag);
+        CAMLassert(Color_hd(hd) != Caml_blue);
+        (void)hd;
+    }
+}
+#endif
+
 static void collect_minor_roots_and_refs(void) {
     root_count = 0;
     caml_do_roots(scan_minor_root, 1);
@@ -868,6 +909,10 @@ static void collect_minor_roots_and_refs(void) {
             }
         }
     }
+
+#ifdef DEBUG
+    debug_check_major_roots();
+#endif
 }
 
 static void fatal_promotion_failed(void) {

@@ -102,3 +102,24 @@ val cheney_promote_fwd_target_not_free (ph: gc_phase)
        (let target : obj_addr = prom.fwd_map x in
         Seq.mem target (objects zero_addr prom.major_final) /\
         not (free prom.major_final target))))
+
+/// The image of a normally-forwarded minor object carries its tag.
+val cheney_promote_fwd_target_tag (ph: gc_phase)
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (x: U64.t)
+  : Lemma
+    (requires blocks_fit major /\ no_infix_block major /\
+              AllocLemmas.fl_valid major fp heap_words /\
+              AllocLemmas.fl_chain_terminates major fp heap_words /\
+              chain_objects_blue major fp /\
+              minor_wf minor /\
+              minor_infix_wf minor /\
+              (let prom = cheney_promote ph minor major fp roots in
+               prom.fwd_map x <> 0UL /\
+               Seq.mem x (minor_objects minor)))
+    (ensures
+      (let prom = cheney_promote ph minor major fp roots in
+       is_val_addr (prom.fwd_map x) /\
+       (let target : obj_addr = prom.fwd_map x in
+        Seq.mem target (objects zero_addr prom.major_final) /\
+        U64.v (tag_of_object target prom.major_final) == minor_tag minor x)))

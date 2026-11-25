@@ -88,6 +88,8 @@ private let rec remembered_slot_targets_from_mem
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
+let remembered_slot_targets_mem major slots n i = remembered_slot_targets_from_mem major slots n 0 i
+
 private let rec remembered_slot_targets_from_all_in_roots
   (major: heap)
   (roots slots: seq U64.t)
@@ -154,6 +156,35 @@ let remembered_targets_in_roots_intro_by_slots major roots slots n
 let roots_valid_with_stw minor major roots = ()
 
 let roots_valid_with_implies_not_free free minor major roots = ()
+
+let roots_valid_with_implies_named free minor major roots = ()
+
+let major_root_valid_of_object (major: heap) (r: obj_addr)
+  = assert (~(is_infix r major));
+    resolve_non_infix r major;
+    infix_addr_wf_non_infix major (objects zero_addr major) r
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let roots_valid_of_ordinary minor major fp roots
+  = GenInv.collection_heap_shape_elim minor major fp;
+    GenInv.major_heap_shape_elim major fp;
+    let aux (r: U64.t)
+      : Lemma (requires Seq.mem r roots /\ ~(is_minor_pointer r))
+              (ensures is_val_addr r /\
+                       infix_addr_wf major (objects zero_addr major) (r <: obj_addr) /\
+                       Seq.mem (resolve_object (r <: obj_addr) major) (objects zero_addr major) /\
+                       ~(is_blue (resolve_object (r <: obj_addr) major) major))
+      = wf_objects_non_infix major (r <: obj_addr);
+        resolve_non_infix (r <: obj_addr) major;
+        infix_addr_wf_non_infix major (objects zero_addr major) (r <: obj_addr)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let named_root_is_pointer_field (g: heap) (r: obj_addr)
+  = RBridge.resolved_in_objects_is_pointer g r
+#pop-options
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 let rec resolve_roots_length h rts =
@@ -227,6 +258,25 @@ let update_preserves_major_target_field
   (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (src dst: obj_addr) (j: nat)
   =
     RBridge.major_object_not_minor_pointer major dst;
+    if upd src
+    then PromUpdate.update_walk_field_effect major upd fwd src j
+    else PromUpdate.update_walk_preserves_skipped_field major upd fwd src j;
+    let field_addr = U64.uint_to_t (U64.v src + j * 8) in
+    let old_raw = read_word major field_addr in
+    let old_val = to_minor_offset old_raw in
+    assert (old_raw == dst);
+    assert (old_val == dst);
+    assert (~(is_minor_pointer old_val));
+    assert (~(is_minor_pointer old_val /\ fwd old_val <> 0UL))
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
+let update_preserves_major_named_field
+  (major: heap) (upd: obj_addr -> GTot bool) (fwd: forwarding_map) (src dst: obj_addr) (j: nat)
+  =
+    RBridge.resolved_in_objects_is_pointer major dst;
+    RBridge.major_object_not_minor_pointer major (resolve_object dst major);
+    to_minor_offset_stable_above_minor dst;
     if upd src
     then PromUpdate.update_walk_field_effect major upd fwd src j
     else PromUpdate.update_walk_preserves_skipped_field major upd fwd src j;
