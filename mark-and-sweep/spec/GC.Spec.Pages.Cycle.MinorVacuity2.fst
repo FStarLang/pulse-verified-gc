@@ -77,7 +77,7 @@ let sm2 (g: heap) : GTot pstate = (mc2 g).P.rst
 let since2 (g: heap) : obj_addr -> prop = GMC.with_new_blocks SPC.nothing_new (D.gd g) (gm2 g)
 
 /// The nursery holds no major pointer.
-let nur2_empty (w: obj_addr) : Lemma (~(GMM.nursery_refs N2.nur2 w))
+let nur2_empty (h: heap) (w: obj_addr) : Lemma (~(GMM.nursery_refs N2.nur2 h w))
   = zero_addr_above_2048 ();
     let no (obj: U64.t) (j: nat)
       : Lemma (Seq.mem obj (minor_objects N2.nur2) /\ j < minor_scan_wosize N2.nur2 obj ==>
@@ -115,8 +115,8 @@ let mpre_ok2 (g: heap)
     D.darkened_a g;
     PM.start_facts V.m0 (D.h g) (D.st g) (D.rs g);
     MP.no_black_tri_color (D.gd g);
-    FStar.Classical.forall_intro nur2_empty;
-    MP.marking_inv_start (D.gd g) (GMM.nursery_refs N2.nur2);
+    FStar.Classical.forall_intro_2 nur2_empty;
+    MP.marking_inv_start (D.gd g) (GMM.nursery_refs N2.nur2 (D.gd g));
     N2.shape ();
     roots_ok g;
     N2.no_major (MPC.outside_snapshot (MC.snapshot (D.h g) (D.rs g) SPC.nothing_new)) (D.gd g)

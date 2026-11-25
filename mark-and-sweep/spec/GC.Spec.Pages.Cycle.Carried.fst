@@ -261,14 +261,14 @@ noeq type cmarking (g0: heap) (rs: seq U64.t) : heap -> pstate -> MP.scan_pos ->
       #g: heap -> #st: pstate -> #sp: MP.scan_pos -> #since: (obj_addr -> prop) ->
       cmarking g0 rs g st sp since ->
       minor: minor_state -> g': heap -> sp': MP.scan_pos ->
-      squash (MP.marking_inv g (GMM.nursery_refs minor) sp /\ S.mark_steps g sp g' sp') ->
+      squash (MP.marking_inv g (GMM.nursery_refs minor g) sp /\ S.mark_steps g sp g' sp') ->
       cmarking g0 rs g' st sp' since
   // The barrier write of `v` at `a`, a body word of `x`.
   | CWrite :
       #g: heap -> #st: pstate -> #sp: MP.scan_pos -> #since: (obj_addr -> prop) ->
       cmarking g0 rs g st sp since ->
       minor: minor_state -> x: obj_addr -> a: hp_addr -> v: U64.t ->
-      squash (MP.marking_inv g (GMM.nursery_refs minor) sp /\
+      squash (MP.marking_inv g (GMM.nursery_refs minor g) sp /\
               GB.modify_ok Ph.Marking minor g sp x a v /\
               MPC.cycle_write (MC.snapshot g0 rs since) g x a v) ->
       cmarking g0 rs (GB.modify_heap Ph.Marking g a v) st sp since
@@ -278,7 +278,7 @@ noeq type cmarking (g0: heap) (rs: seq U64.t) : heap -> pstate -> MP.scan_pos ->
       #g: heap -> #st: pstate -> #sp: MP.scan_pos -> #since: (obj_addr -> prop) ->
       cmarking g0 rs g st sp since ->
       minor: minor_state -> wz: nat -> g1: heap -> st1: pstate -> obj: obj_addr ->
-      squash (MP.marking_inv g (GMM.nursery_refs minor) sp /\
+      squash (MP.marking_inv g (GMM.nursery_refs minor g) sp /\
               PA.alloc I.Marking g st wz == (g1, st1, (obj <: U64.t))) ->
       g': heap -> MC.init_writes obj g1 g' ->
       squash (SPM.fields_storable (MPC.outside_snapshot (MC.snapshot g0 rs (SPC.with_new since obj))) g' obj) ->
@@ -289,7 +289,7 @@ noeq type cmarking (g0: heap) (rs: seq U64.t) : heap -> pstate -> MP.scan_pos ->
       #g: heap -> #st: pstate -> #sp: MP.scan_pos -> #since: (obj_addr -> prop) ->
       cmarking g0 rs g st sp since ->
       minor: minor_state -> wz: nat -> tag: AT.tag_t -> g1: heap -> st1: pstate -> obj: obj_addr ->
-      squash (MP.marking_inv g (GMM.nursery_refs minor) sp /\ U64.v tag <> 249 /\
+      squash (MP.marking_inv g (GMM.nursery_refs minor g) sp /\ U64.v tag <> 249 /\
               AT.alloc_tag I.Marking g st wz tag == (g1, st1, (obj <: U64.t))) ->
       g': heap -> MC.init_writes obj g1 g' ->
       squash (SPM.fields_storable (MPC.outside_snapshot (MC.snapshot g0 rs (SPC.with_new since obj))) g' obj /\
@@ -301,7 +301,7 @@ noeq type cmarking (g0: heap) (rs: seq U64.t) : heap -> pstate -> MP.scan_pos ->
       #g: heap -> #st: pstate -> #sp: MP.scan_pos -> #since: (obj_addr -> prop) ->
       cmarking g0 rs g st sp since ->
       minor: minor_state -> roots: seq U64.t ->
-      squash (MP.marking_inv g (GMM.nursery_refs minor) sp /\ GenInv.minor_heap_shape minor /\
+      squash (MP.marking_inv g (GMM.nursery_refs minor g) sp /\ GenInv.minor_heap_shape minor /\
               MCFH.roots_valid_for_minor_collection minor g roots /\
               MP.outside_refs_reached g sp (GMM.root_refs g roots) /\
               GenInv.minor_major_fields_not_free (MPC.outside_snapshot (MC.snapshot g0 rs since)) minor g) ->
@@ -398,7 +398,7 @@ noeq type ccycle (g0: heap) (rs: seq U64.t) : heap -> pstate -> I.phase -> (obj_
       #g: heap -> #st: pstate -> #sp: MP.scan_pos -> #sm: (obj_addr -> prop) ->
       cmarking g0 rs g st sp sm ->
       minor: minor_state -> gh: heap -> sp': MP.scan_pos ->
-      squash (MP.marking_inv g (GMM.nursery_refs minor) sp /\ S.mark_steps g sp gh sp' /\
+      squash (MP.marking_inv g (GMM.nursery_refs minor g) sp /\ S.mark_steps g sp gh sp' /\
               Mark.noGreyObjects gh /\ sp' == MP.scan_none) ->
       #g': heap -> #st': pstate -> #ph: I.phase -> #ss: (obj_addr -> prop) ->
       sr: csweep gh g' st' ph ss ->
@@ -514,8 +514,8 @@ let to_pcycle (#g0: heap) (#rs: seq U64.t) (#g: heap) (#st: pstate) (#ph: I.phas
     | CSweep #_ #_ #gm #stm #sp #sm rm minor gh sp' _ #g' #st' #ph' #ss sr _ ->
         let rm' = to_pmarking rm in
         CS.mark_steps_inv stm gm sp gh sp';
-        S.mark_steps_inv gm gh sp sp' (GMM.nursery_refs minor);
-        CS.handover_ready gh stm (GMM.nursery_refs minor) sp';
+        S.mark_steps_inv gm gh sp sp' (GMM.nursery_refs minor gm);
+        CS.handover_ready gh stm (GMM.nursery_refs minor gm) sp';
         let sr' = to_psweep sr in
         (if I.Idle? ph' then MS2.sw_end g' st');
         PC.PSweep rm' minor gh sp' () sr' ()

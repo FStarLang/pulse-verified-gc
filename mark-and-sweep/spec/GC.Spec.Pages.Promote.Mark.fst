@@ -261,11 +261,13 @@ let nursery_not_unreached (minor: minor_state) (g: heap) (st: pstate) (roots: se
     let h (obj: U64.t) (j: nat)
       : Lemma (requires Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
                         is_pointer_field (minor_read_field minor obj j))
-              (ensures in_use (MP.unreached g sp) g ((minor_read_field minor obj j) <: obj_addr))
+              (ensures in_use (MP.unreached g sp) g (resolve_object ((minor_read_field minor obj j) <: obj_addr) g) /\
+                       infix_addr_wf g (objects zero_addr g) ((minor_read_field minor obj j) <: obj_addr))
       = GenInv.minor_major_fields_not_free_elim free_stw minor g obj j;
         let v : obj_addr = minor_read_field minor obj j in
-        assert (GMM.nursery_refs minor v);
-        assert (GMM.outside_refs_of minor g roots v)
+        let w : obj_addr = resolve_object v g in
+        assert (GMM.nursery_refs minor g w);
+        assert (GMM.outside_refs_of minor g roots w)
     in
     GenInv.minor_major_fields_not_free_intro (MP.unreached g sp) minor g h
 #pop-options
@@ -380,10 +382,8 @@ let rewritten_root (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t
       MM.header_kept_facts pm g' t;
       Mark.colors_exclusive t g'
     end else begin
-      // an old root, a major block
+      // an old root: it names the major block it resolves to
       assert (r == r');
-      resolve_non_infix (r <: obj_addr) g;
-      infix_addr_wf_non_infix g (objects zero_addr g) (r <: obj_addr);
       free_stw_ok ();
       m_target minor g st roots r
     end

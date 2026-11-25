@@ -296,7 +296,7 @@ let smm (g: heap) : GTot pstate = (mcm g).P.rst
 let since_mk (g: heap) : obj_addr -> prop = GMC.with_new_blocks SPC.nothing_new (D.gd g) (gmm g)
 
 /// The nursery holds no major pointer.
-let nur_empty (w: obj_addr) : Lemma (~(GMM.nursery_refs NW.nur w))
+let nur_empty (h: heap) (w: obj_addr) : Lemma (~(GMM.nursery_refs NW.nur h w))
   = let no (obj: U64.t) (j: nat)
       : Lemma (Seq.mem obj (minor_objects NW.nur) ==> minor_read_field NW.nur obj j == 0UL)
       = if Seq.mem obj (minor_objects NW.nur) then NW.nur_field obj j
@@ -319,8 +319,8 @@ let mpre_ok (g: heap)
     D.darkened_a g;
     PM.start_facts V.m0 (D.h g) (D.st g) (D.rs g);
     MP.no_black_tri_color (D.gd g);
-    FStar.Classical.forall_intro nur_empty;
-    MP.marking_inv_start (D.gd g) (GMM.nursery_refs NW.nur);
+    FStar.Classical.forall_intro_2 nur_empty;
+    MP.marking_inv_start (D.gd g) (GMM.nursery_refs NW.nur (D.gd g));
     NW.nur_shape ();
     NW.nur_facts ();
     GenInv.minor_heap_shape_elim NW.nur;

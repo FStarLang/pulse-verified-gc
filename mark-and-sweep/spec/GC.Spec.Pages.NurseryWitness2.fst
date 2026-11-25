@@ -300,7 +300,8 @@ let no_major (free: free_def) (g: heap)
     let h (obj: U64.t) (j: nat)
       : Lemma (requires Seq.mem obj (minor_objects nur2) /\ j < minor_scan_wosize nur2 obj /\
                         is_pointer_field (minor_read_field nur2 obj j))
-              (ensures in_use free g ((minor_read_field nur2 obj j) <: obj_addr))
+              (ensures in_use free g (resolve_object ((minor_read_field nur2 obj j) <: obj_addr) g) /\
+                       infix_addr_wf g (objects zero_addr g) ((minor_read_field nur2 obj j) <: obj_addr))
       = field_val obj j;
         assert_norm (U64.v objB == 24)
     in
