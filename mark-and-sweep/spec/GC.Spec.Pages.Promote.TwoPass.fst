@@ -264,6 +264,14 @@ let word_index (m: U64.t)
   = ML.lemma_div_exact (U64.v m) 8;
     U64.v m / 8
 
+/// The forwarding array's entry for a nursery object.
+let farr_at_obj (farr: seq U64.t) (fwd: forwarding_map) (m: U64.t)
+  : Lemma (requires represents_fwd farr fwd /\
+                    U64.v m >= 8 /\ U64.v m < minor_heap_size /\ U64.v m % 8 == 0)
+          (ensures exists (pi: nat). pi < fwd_array_size /\ Seq.index farr pi == fwd m)
+  = let pi = word_index m in
+    farr_at farr fwd pi
+
 #push-options "--z3rlimit 40"
 let classified_one (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate)
                    (farr slots: seq U64.t) (n: nat) (obj: obj_addr) (j: nat)
@@ -284,8 +292,7 @@ let classified_one (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate p
       eliminate exists (m: U64.t). cs.fwd m == (obj <: U64.t) /\ copy_of a minor g0 cs.major m (obj <: U64.t)
       with begin
         minor_objects_valid minor m;
-        let pi = word_index m in
-        farr_at farr cs.fwd pi
+        farr_at_obj farr cs.fwd m
       end
     end
 #pop-options

@@ -147,7 +147,9 @@ let sweep_page_frees (g: heap) (i: nat{i < n_pages}) (c: nat{c < n_cls})
       = if k < n_slots c then pool_init_free g i c k
     in
     FStar.Classical.forall_intro free;
-    SP.sweep_page_correct ()
+    SP.sweep_page_correct ();
+    let (g', e) = SP.sweep_page g0 (pool_map i c) i in
+    assert (sweep_page_ok g0 (pool_map i c) i c g' e)
 
 /// ---------------------------------------------------------------------------
 /// A large run
