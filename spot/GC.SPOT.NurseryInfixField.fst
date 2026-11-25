@@ -428,6 +428,8 @@ let nursery_field (r: unit{InfixMajor.spot_infix_room}) (obj: U64.t) (j: nat)
       assert (minor_wosize (nursery r) n_obj == 1);
       assert (minor_tag (nursery r) n_obj == 0);
       assert (minor_scan_wosize (nursery r) n_obj == 1);
+      assert (minor_scan_wosize (nursery r) obj == 1);
+      assert (j < 1);
       assert (j == 0);
       n_field r
     end else begin

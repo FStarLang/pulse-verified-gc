@@ -192,6 +192,8 @@ let ms1_facts () : Lemma (nursery_one (r1_ ()).memory.nursery) =
   assert (write_nursery_fields d res.obj_addr init1 0 == d1);
   read_write_different d 8UL 0UL one;
   let ms1 = (r1_ ()).memory.nursery in
+  assert (ms1.bump == res.ms_out.bump);
+  assert (U64.v ms1.bump == 16);
   assert (ms1.data == d1);
   assert (minor_wosize ms1 8UL == 1);
   assert (minor_tag ms1 8UL == 0);

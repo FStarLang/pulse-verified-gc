@@ -181,6 +181,12 @@ let same_header_facts (g g': heap) (y: obj_addr)
     color_of_object_spec y g; color_of_object_spec y g';
     is_gray_iff y g; is_gray_iff y g'
 
+/// The address of field `j` of `a`, without its wrap-around.
+let major_slot_v (a: obj_addr) (j: nat)
+  : Lemma (requires U64.v a + 8 * j < pow2 64)
+          (ensures U64.v (major_slot a j) == U64.v a + j * 8)
+  = FStar.Math.Lemmas.small_mod (U64.v a + 8 * j) (pow2 64)
+
 #push-options "--z3rlimit 40"
 let rt_sound (free: free_def) (r r': real_state) (tag: I.tag_t) (a: obj_addr) (init: seq U64.t)
   : Lemma (requires old_ok free r.memory.major r'.memory.major a /\
@@ -213,7 +219,7 @@ let rt_sound (free: free_def) (r r': real_state) (tag: I.tag_t) (a: obj_addr) (i
                                      Seq.index (young_slots a init) (i - n) == major_slot a j
           with begin
             is_no_scan_spec a g';
-            FStar.Math.Lemmas.small_mod (U64.v a + 8 * j) (pow2 64);
+            major_slot_v a j;
             assert (U64.v (major_slot a j) == U64.v a + j * 8);
             assert (U64.v (Seq.index rt' i) == U64.v a + j * 8);
             FStar.Math.Lemmas.lemma_mod_plus (U64.v a) j 8;
