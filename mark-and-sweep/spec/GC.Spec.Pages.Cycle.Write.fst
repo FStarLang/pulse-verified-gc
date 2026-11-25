@@ -77,6 +77,7 @@ module MS = GC.Spec.Pages.MidSweep
 module CS = GC.Spec.Pages.Cycle.State
 module PM = GC.Spec.Pages.Cycle.Mark
 module FF = GC.Spec.Pages.FillFacts
+module GenInv = GC.Gen.HeapInvariant
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
@@ -250,17 +251,62 @@ let barrier_mark_inv (g: heap) (st: pstate) (x: obj_addr) (a: hp_addr) (v: U64.t
     darken_keeps_write g w x a v;
     write_mark_inv (MM.darken g w) st x a v
 
+/// The barrier keeps what the nursery names, when its major pointers lead
+/// to blocks in use: darkening recolours at most one block, and the write is
+/// into the body of a non-closure block in use.
+#push-options "--z3rlimit 30"
+let barrier_keeps_nursery (minor: minor_state) (g: heap) (o: obj_addr -> prop) (sp: MP.scan_pos)
+                          (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires MP.marking_inv g o sp /\ GenInv.minor_major_fields_not_free free_stw minor g /\
+                    SPM.program_write free_stw g x a v)
+          (ensures (forall (w: obj_addr).
+                      GMM.nursery_refs minor (GB.modify_heap Ph.Marking g a v) w <==> GMM.nursery_refs minor g w))
+  = let w = read_word g a in
+    let g1 = MM.darken g w in
+    MM.darken_inv g o sp w;
+    darken_keeps_write g w x a v;
+    (if is_pointer w &&
+        Seq.mem (resolve_object (w <: obj_addr) g) (objects zero_addr g) &&
+        is_white (resolve_object (w <: obj_addr) g) g
+     then begin
+       let t = resolve_object (w <: obj_addr) g in
+       makeGray_eq t g;
+       color_change_preserves_objects g t Header.Gray;
+       let iu (y: obj_addr)
+         : Lemma (in_use free_stw g y ==> in_use free_stw g1 y)
+         = if y = t then begin
+             makeGray_is_gray t g;
+             Mark.colors_exclusive t g1;
+             is_blue_iff t g1
+           end else begin
+             color_change_preserves_other_color t y g Header.Gray;
+             is_blue_iff y g; is_blue_iff y g1
+           end
+       in
+       FStar.Classical.forall_intro iu;
+       GenInv.minor_major_fields_not_free_recolour free_stw minor t g Header.Gray;
+       GMM.nursery_refs_colour minor t g Header.Gray
+     end);
+    free_stw_ok ();
+    wf_parts ();
+    GMM.write_keeps_nursery free_stw minor g1 x a v
+#pop-options
+
 /// **A `PWrite` keeps the collector's state while marking**: from the
 /// event's own hypotheses (`pmark_ok` before it, akhil's `GB.modify_ok`),
 /// `pmark_ok` after it -- the page part here, the marking invariant by
-/// akhil's `MM.marking_write_barrier`.
+/// akhil's `MM.marking_write_barrier`, at the nursery's references in the
+/// heap after it (`barrier_keeps_nursery`, which needs the nursery's major
+/// pointers to lead to blocks in use).
 let pwrite_keeps (minor: minor_state) (g: heap) (st: pstate) (sp: MP.scan_pos)
                  (x: obj_addr) (a: hp_addr) (v: U64.t)
-  : Lemma (requires PM.pmark_ok minor g st sp /\ GB.modify_ok Ph.Marking minor g sp x a v)
+  : Lemma (requires PM.pmark_ok minor g st sp /\ GB.modify_ok Ph.Marking minor g sp x a v /\
+                    GenInv.minor_major_fields_not_free free_stw minor g)
           (ensures PM.pmark_ok minor (GB.modify_heap Ph.Marking g a v) st sp)
   = GI.phase_free_marking ();
     barrier_mark_inv g st x a v;
-    MM.marking_write_barrier g (GMM.nursery_refs minor) sp x a v
+    MM.marking_write_barrier g (GMM.nursery_refs minor g) sp x a v;
+    barrier_keeps_nursery minor g (GMM.nursery_refs minor g) sp x a v
 
 /// **Outside a cycle**: akhil's barrier at `Idle` is the plain write; it
 /// keeps the page `Idle` invariant.

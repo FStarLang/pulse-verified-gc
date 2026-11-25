@@ -293,12 +293,8 @@ let new_src (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g: he
       assert (j < minor_scan_wosize minor m);
       assert (minor_read_field minor m j == (dst <: U64.t));
       GenInv.minor_major_fields_not_free_elim un minor g0 m j;
-      assert (in_use un g0 dst);
       wf_with_parts ();
-      free_def_ok_elim un;
-      assert (~(is_infix dst g0));
-      resolve_non_infix dst g0;
-      infix_addr_wf_non_infix g0 (objects zero_addr g0) dst;
+      free_def_ok_elim a.free;
       old_target_wf a un g0 g dst
     end
 #pop-options

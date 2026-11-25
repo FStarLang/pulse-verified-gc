@@ -109,8 +109,8 @@ let m0_reset () : Lemma (minor_reset m0 == m0)
     assert (r == { data = r.data; bump = r.bump });
     assert (m0 == { data = m0.data; bump = m0.bump })
 
-let m0_empty (w: obj_addr) : Lemma (~(GMM.nursery_refs m0 w))
-  = GMM.nursery_refs_reset m_any w
+let m0_empty (h: heap) (w: obj_addr) : Lemma (~(GMM.nursery_refs m0 h w))
+  = GMM.nursery_refs_reset m_any h w
 
 /// ---------------------------------------------------------------------------
 /// The start
@@ -298,8 +298,8 @@ let gd_ok (g: heap)
     darkened_c g;
     PM.start_facts m0 (h g) (st g) (rs g);
     MP.no_black_tri_color (gd g);
-    FStar.Classical.forall_intro m0_empty;
-    MP.marking_inv_start (gd g) (GMM.nursery_refs m0)
+    FStar.Classical.forall_intro_2 m0_empty;
+    MP.marking_inv_start (gd g) (GMM.nursery_refs m0 (gd g))
 #pop-options
 
 /// The hand-over's hypotheses.
@@ -314,8 +314,9 @@ let handover_ok (g: heap)
     marks g;
     gm_no_grey g;
     CS.mark_steps_inv (st g) (gd g) MP.scan_none (gm g) MP.scan_none;
-    S.mark_steps_inv (gd g) (gm g) MP.scan_none MP.scan_none (GMM.nursery_refs m0);
-    CS.handover_ready (gm g) (st g) (GMM.nursery_refs m0) MP.scan_none
+    FStar.Classical.forall_intro_2 m0_empty;
+    S.mark_steps_inv (gd g) (gm g) MP.scan_none MP.scan_none (GMM.nursery_refs m0 (gd g));
+    CS.handover_ready (gm g) (st g) (GMM.nursery_refs m0 (gd g)) MP.scan_none
 
 /// ---------------------------------------------------------------------------
 /// The sweep
@@ -741,7 +742,9 @@ let gm_ok (g: heap)
   : Lemma (requires Wt.big_enough) (ensures PM.pmark_ok m0 (gm g) (st g) MP.scan_none)
   = handover_ok g;
     CS.mark_steps_inv (st g) (MStart.darkened (h g) (rs g)) MP.scan_none (gm g) MP.scan_none;
-    S.mark_steps_inv (MStart.darkened (h g) (rs g)) (gm g) MP.scan_none MP.scan_none (GMM.nursery_refs m0)
+    FStar.Classical.forall_intro_2 m0_empty;
+    S.mark_steps_inv (MStart.darkened (h g) (rs g)) (gm g) MP.scan_none MP.scan_none
+      (GMM.nursery_refs m0 (MStart.darkened (h g) (rs g)))
 
 /// A free page at the start, chosen.
 let jf (g: heap{roomy}) : GTot (j: nat{j < n_pages /\ Wt.kind_of (st g) j == Free}) =
@@ -828,7 +831,8 @@ let gz_ok (g: heap)
     same_hdr (gb g) (gz g) x;
     FStar.Classical.forall_intro (FStar.Classical.move_requires (body_one x));
     assert (I.fields_written (gb g) (gz g) x);
-    let o = GMM.nursery_refs m0 in
+    FStar.Classical.forall_intro_2 m0_empty;
+    let o = GMM.nursery_refs m0 (gm g) in
     PM.fresh_of_facts (gm g) (gb g) o MP.scan_none x;
     MPA.marking_fresh_write (gb g) o MP.scan_none x a 0UL;
     assert (SPM.field_val (gz g) x 0 == 0UL);
@@ -903,7 +907,8 @@ let gw_ok (g: heap)
     assert (I.field_ok gw' (c <: U64.t));
     assert (I.fields_written (gb g) gw' x);
     (* the marking invariant: akhil's barrier lemma *)
-    MM.marking_write_barrier (gz g) (GMM.nursery_refs m0) MP.scan_none x a (c <: U64.t);
+    FStar.Classical.forall_intro_2 m0_empty;
+    MM.marking_write_barrier (gz g) (GMM.nursery_refs m0 (gz g)) MP.scan_none x a (c <: U64.t);
     (* nothing grey *)
     gm_no_grey g;
     let ng (y: obj_addr) : Lemma (requires Seq.mem y (objects zero_addr gw')) (ensures ~(is_gray y gw'))
@@ -978,7 +983,7 @@ let step1e (g: heap)
                    ((entry (s1e g).pm (ia g)).kind == Free \/ has_free_slot (s1e g).pm Wt.cA (ia g)) /\
                    (entry (s1e g).pm (i0 g)).kind == LargeHead Wt.kL /\ not (entry (s1e g).pm (i0 g)).swept)
   = gw_ok g;
-    CS.handover_ready (gw g) (sb g) (GMM.nursery_refs m0) MP.scan_none;
+    CS.handover_ready (gw g) (sb g) (GMM.nursery_refs m0 (gw g)) MP.scan_none;
     MS2.sw_start (gw g) (s0e g);
     at_start_e g;
     at_start g;

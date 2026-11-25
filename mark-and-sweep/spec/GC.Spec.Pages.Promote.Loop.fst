@@ -263,22 +263,47 @@ let copied_field_ok (#s: Type0) (a: tal s) (minor: minor_state) (g0 g g1 g2: hea
     if is_pointer v then begin
       let w : obj_addr = v in
       GenInv.minor_major_fields_not_free_elim a.free minor g0 addr j;
-      assert (in_use a.free g0 w);
-      assert (in_use a.free g w /\ kept g0 g w);
-      assert (in_use a.free g2 w /\ kept g g2 w);
-      // not infix: a block of the walk of g0, with its header
+      // `w` names the block `r` it resolves to: `w` itself, or the closure
+      // `w` points into
+      let r : obj_addr = resolve_object w g0 in
+      assert (in_use a.free g0 r);
+      assert (in_use a.free g r /\ kept g0 g r);
+      assert (in_use a.free g2 r /\ kept g g2 r);
+      kept_trans g0 g g2 r;
       wf_with_parts ();
       free_def_ok_elim a.free;
-      assert (~(is_infix w g0));
-      resolve_object_locality w g0 g;
-      resolve_object_locality w g g2;
-      resolve_non_infix w g2;
-      infix_addr_wf_non_infix g2 (objects zero_addr g2) w;
-      // away from x
-      assert (w <> x);
-      F.other_apart g1 x w;
-      wosize_of_object_spec w g1;
-      wosize_of_object_spec w g
+      // `r` is a block of the walk, with its header: not infix
+      assert (~(is_infix r g0));
+      resolve_object_locality r g0 g;
+      resolve_object_locality r g g2;
+      wosize_of_object_spec r g0;
+      wosize_of_object_spec r g;
+      if is_infix w g0 then begin
+        // `w` lies in `r`'s body, and so does its header, which the steps keep
+        infix_addr_wf_elim g0 (objects zero_addr g0) w;
+        resolve_infix_spec w g0;
+        parent_closure_addr_nat_spec w g0;
+        hd_address_spec w;
+        let wzw = U64.v (wosize_of_object w g0) in
+        assert (wzw >= 2 /\ U64.v r == U64.v w - wzw * 8);
+        assert (U64.v w < U64.v r + U64.v (wosize_of_object r g0) * 8);
+        let hw : hp_addr = hd_address w in
+        assert (U64.v hw == U64.v w - 8);
+        assert (U64.v r <= U64.v hw /\ U64.v hw < U64.v r + U64.v (wosize_of_object r g0) * 8);
+        assert (read_word g2 hw == read_word g0 hw);
+        resolve_object_locality w g0 g2;
+        infix_addr_wf_transfer g0 g2 (objects zero_addr g0) (objects zero_addr g2) w
+      end else begin
+        resolve_non_infix w g0;
+        resolve_object_locality w g0 g2;
+        resolve_non_infix w g2;
+        infix_addr_wf_non_infix g2 (objects zero_addr g2) w
+      end;
+      assert (resolve_object w g2 == r);
+      // away from x: `w` lies in `r`'s block, which is apart from `x`
+      assert (r <> x);
+      F.other_apart g1 x r;
+      wosize_of_object_spec r g1
     end
 #pop-options
 
