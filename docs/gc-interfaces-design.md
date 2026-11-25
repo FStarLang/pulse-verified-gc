@@ -2363,18 +2363,11 @@ module's `.checked` file was removed first; the modules they depend on are
 unchanged since that sweep.  Rlimits are at most 40, with no admits and no
 assumes.  Results are in §14.8.
 
-### 14.7 Pages: not built
+### 14.7 Pages: built in §17
 
-The pages runs need the same apparatus for the page allocator and the page
-sweep:
-- allocation into a pool page of a size class, or into a run of empty
-  pages, with abstract `page_wsize`, `n_cls` and `cls`;
-- the page sweep's units over a page or a run;
-- a closed form of the heap over pages.
-
-The witness `GC.Spec.Pages.Witness` (`big_enough`) gives the heap shape to
-start from, not the steps.  This is at least the size of the first-fit work
-(16 modules here) and is the next stage.
+The pages runs are built in §17.  They do not write the heap of pages in
+closed form; they describe the blocks in use and follow each step through
+the components' contracts (§17.1).
 
 ### 14.8 Files and results
 
@@ -3375,3 +3368,286 @@ changed):
 **The build.**  `gmake -j6 verify` from an empty `_cache` in a scratch
 worktree (default `--retry 3`, as CI): 527 cache files, 394 modules
 verified (all T1 modules among them), 0 errors, 80 min.
+
+---
+
+## 17. Witness runs: the pages collector
+
+The user's request (2026-11-25): the pages witness runs in both styles, as
+for first-fit (§14, §15).  The runs are symbolic, under explicit size
+hypotheses (never an `assume`), and start from a heap built through the
+page allocator.  They need roots, reachable and unreachable objects, every
+kind of event, and a barrier write that darkens.  They need minor
+collections inside a cycle that promote live young objects: one holding an
+infix pointer into an old closure, one holding an integer that reads as an
+infix header.  Every hypothesis of `gc_correct`, T1 and T2 must be shown to
+hold.  Also add a coalescing case to the first-fit runs, if it fits.
+
+Both pages runs are built and checked, with every hypothesis shown
+(§17.5).  The first-fit coalescing case is not built (§17.7).
+
+### 17.1 Method: describe the blocks in use; follow the contracts
+
+The first-fit runs track an exact model heap in closed form (§14.2).  That
+does not carry over to pages:
+- the free pages and the free slots of a pool page are abstract in number;
+- a free slot's link field is part of the model;
+- page and slot addresses are products with the abstract page size, which
+  is nonlinear arithmetic.
+
+So a pages configuration is described relationally, by `PWDesc.holds x d`:
+
+- its phase, its nursery (the minor state, and the model nursery it
+  represents), its roots, and an empty remembered set;
+- the allocator's invariant and a page budget, `PWPages.kinds_ok st j`:
+  pages from `j` on are free, and every page is free or a pool page;
+- its blocks in use, read on the canonical model `cabs`.  Each one is
+  described by `d.db`: its size and tag, its colour, whether it is live or
+  garbage, and its fields.  A block that is not described is not in use.
+  - While sweeping, a live block has the colour rule's colour: black where
+    unswept, white where swept.
+  - A garbage block is white and unswept while it is in use, and its fields
+    are not tracked.  Any sweep step may free it.
+
+Where the allocator puts a block is never computed.  The address is the
+allocator's own answer (`PWAlloc.aaddr`), and the copies a minor collection
+makes are its forwarding map (`PWMinor.mfwd`).  Each step is a lemma that
+takes one description to the next, from the component's contract, which is
+sealed so the solver uses only the instance it needs (`PWDesc.cok`,
+`cok_hyps`):
+
+| Module | Event | Source of the facts |
+|---|---|---|
+| `PWAlloc` | `EAlloc` | `alloc_at`, then the byte barrier's Fill |
+| `PWMut` | `EWrite`, `ERead`, `ERoots`, `EYoungAlloc` | `ByteBarrier.bwrite_cabs`, darkening included |
+| `PWMark` | `EStart`, `ESlice` | byte mark on the model (`bstart_cabs`, `scan_obj_cabs`); `ESlice` scans the grey block the mark finds (`fg`) |
+| `PWMinor` | `EMinor` | `minor_at` |
+| `PWSweep` | hand-over, steps, end | sweep contract |
+
+Two facts are about pages themselves (`PWPages`):
+
+- **Room.**  While the budget leaves a free page, every small allocation
+  succeeds (`room_of`, via `PagesFits.pfits_room`).
+  - A small allocation changes the kind of only the first free page
+    (`Witness.small_kinds`), so it costs one page (`palloc_kinds`).
+  - The sweep's start and steps cost nothing (`pstart_kinds`, `pstep_kinds`).
+  - A minor collection's page state is the replay of its queue
+    (`PromoteRun.qok`), at one page per promotion (`replay_kinds`).  Its
+    queue holds distinct nursery objects, so at most two
+    (`PWFold.minor_kinds`).
+- **The sweep's length.**  `nsw` counts the units left from the cursor.
+  While it is positive the sweep is not done (`nsw_succ`); at 0 it is done
+  (`nsw_done`).  The runs perform exactly `nsw` sweep steps
+  (`PWSweep.sweeps`), so their event lists are a fixed prefix, `nsw` sweep
+  steps, and a fixed suffix.
+
+The minor collection is never `OutOfRoom`.  The contract justifies
+`OutOfRoom` only by an `alloc_fold` that fails, and every such fold over at
+most the two nursery blocks succeeds while the budget lasts
+(`PWFold.fold_some`, `no_oor`).
+
+### 17.2 The hypothesis
+
+`PWPre.pw_room`: `12 <= n_pages /\ 4 <= ywords`.
+- **Pages.**  The budget is one page per allocation and two per minor
+  collection.  The incremental run makes 5 allocations and 3 minor
+  collections, so 11 pages; the sequential run needs 10.
+- **Nursery.**  4 words hold two one-field young blocks.
+- **Small blocks.**  `small_max >= 17` follows from the parameters' C5 and
+  `n_small = 16` (`PWFold.smax`), so every block of the runs is small.
+
+The real configuration meets the hypothesis by far: thousands of pages,
+and a nursery of 256 words.
+
+### 17.3 The runs
+
+Blocks: A `[B; 1]`, B `[K+2]`, C `[B]` (garbage from 6), K a closure
+`[1; infix_word 2; 1]`, D `[B]` (incremental only).  `k` is the number of
+sweep steps (`ksw`); it is positive (`PWSeqF.ksw_pos`, `PWIncF.ksw_pos`).
+
+**Sequential** (`PWSeq.es_seq`):
+
+| # | Event | Phase | What happens |
+|---|---|---|---|
+| 0-3 | `EAlloc` ×4 | idle | A, B, C (holding B), K, through the page allocator |
+| 4-5 | `EWrite` ×2 | idle | A.0 := B; B.0 := K+2 |
+| 6 | `ERoots [A]` | idle | |
+| 7 | `EStart` | idle | A grey; A, B, K reachable (K only through B's infix pointer); C in use and unreachable |
+| 8 | `EMinor` | marking | empty nursery |
+| 9-11 | `ESlice` ×3 | marking | A (greys B), B (greys K through the infix pointer), K |
+| 12 | `EHandover` | marking | |
+| 13 | `EMinor` | sweeping | empty nursery |
+| 14 .. 13+k | `ESweep` ×k | sweeping | C freed; A, B, K whitened |
+| 14+k | `EEnd` | sweeping | |
+| 15+k | `ERead A.0` | idle | B into a root |
+| 16+k, 17+k | `EYoungAlloc` ×2 | idle | Y1 `[K+2]`, Y2 `[infix_word 2]` |
+| 18+k | `ERoots [A; Y1; Y2]` | idle | |
+| 19+k | `EMinor` | idle | promotes Y1 and Y2 |
+
+**Incremental** (`PWIncB.es_inc`):
+
+| # | Event | Phase | What happens |
+|---|---|---|---|
+| 0-6 | as sequential | idle | |
+| 7 | `EStart` | idle | A grey |
+| 8 | `EAlloc [B]` | marking | D, black |
+| 9 | `EWrite A.0 := 1` | marking | the barrier darkens B, white to grey |
+| 10-11 | `EYoungAlloc` ×2 | marking | Y1 `[K+2]`, Y2 `[infix_word 2]` |
+| 12 | `EMinor` | marking | promotes Y1 and Y2 to black copies; roots rewritten |
+| 13-15 | `ESlice` ×3 | marking | A, B and K, in the order the mark chooses (§17.4) |
+| 16 | `EHandover` | marking | |
+| 17-18 | `EYoungAlloc` ×2 | sweeping | Y1, Y2 again |
+| 19 | `EMinor` | sweeping | promotes both again, through the sweeping allocator |
+| 20 | `ERoots [A; D]` | sweeping | |
+| 21 .. 20+k | `ESweep` ×k | sweeping | C freed; the copies, D, B, K whitened (floating garbage) |
+| 21+k | `EEnd` | sweeping | |
+| 22+k | `ERead D.0` | idle | B into a root |
+| 23+k | `EMinor` | idle | empty nursery |
+
+### 17.4 Marking with two grey blocks
+
+After the write at 9, A and B are both grey.  A slice scans the lowest
+grey block, but the addresses are never computed, so their order is
+unknown.  `PWIncA.slice_dx` gives the next description for whichever grey
+block the mark finds (`PWMark.fg`): it turns black, and its white targets
+turn grey.  The run follows both possible orders:
+
+| After slice | Possible colours (A, B, K) |
+|---|---|
+| 1 | (black, grey, white) or (grey, black, grey) |
+| 2 | (black, black, grey) or (grey, black, black) |
+| 3 | (black, black, black) |
+
+So every slice is enabled whichever order the mark takes.  The hand-over
+comes with nothing grey, and every pointer of a dark block leads to a
+black block.
+
+### 17.5 What is proved
+
+Every statement below is under `pw_room` only (`GC.Spec.Top.PWHyps`).
+
+- **`room_ok`**: `components_ok pc` (`PagesComps.pages_components_ok`;
+  `pw_room` gives `n_pages > 0`).
+- **`seq_hyps`, `inc_hyps`**: for each run, with its cycle from 7 to
+  14 + k (sequential) or 21 + k (incremental), `all_hyps`:
+  - `components_ok`, `run_ok`, `run_hyps`: every hypothesis of
+    `gc_correct` and `gc_correct_local`;
+  - `no_fail`: the hypothesis of T1;
+  - `is_cycle`: T1 part 2's and T2's;
+  - for every reference program the run is transparent with,
+    `names_reachable` (§17.6);
+  - a stop-the-world run that is itself a run with `run_hyps`: what
+    `t2_local` assumes;
+  - also `every_event`, and `k > 0`.
+- **`seq_concl`, `inc_concl`**: so the theorems' conclusions hold of the
+  runs, none vacuously:
+  - (0)-(6);
+  - a reference program that is transparent, names only what it reaches,
+    and is replayed stop-the-world from the cycle's start (T1);
+  - the equivalence with the stop-the-world run (T2).
+- **`nontrivial`**:
+  - **at the cycle's start:** A, B and K are reachable; C is in use and
+    unreachable;
+  - **C freed:** it is free after the cycle in both runs;
+  - **darkening:** B is white before the write at 9 and grey after it;
+  - **promotions:** the collections at 12 (marking) and 19 (sweeping) are
+    `Done` and forward both young blocks.
+- **Further facts:**
+  - `PWSeqF.seq_start`: the only outside reference is A, and B's field is
+    K+2;
+  - `seq_minor_phases`: minor collections while marking, while sweeping and
+    idle;
+  - `seq_promotes`;
+  - `PWIncF.inc_promotes` (Y1's field is K+2, and Y2's is `infix_word 2`,
+    which `infix_hdr` reads as an infix header);
+  - `inc_interleaves`: the program runs while marking (8-10) and while
+    sweeping (17, 20).
+
+### 17.6 T1 part 2's hypothesis
+
+`names_reachable prog` concerns the reference program that T1 provides.
+`GC.Spec.Top.TrNames.names_of` shows it for every program the run is
+transparent with, provided every program event of the run names only:
+- blocks reached from a root along major fields, or
+- young roots (`enamed`).
+
+That is because a path from a root is a path in the reference store
+(`rp_rreach`).  `PWNamesS.seq_named` and `PWNamesI.inc_named` check
+`enamed` at every event of both runs.
+
+### 17.7 Coalescing for first-fit: not built
+
+The coalescing case was optional.  The pages stage took 23 modules, so it
+was not done.  §15.5 still holds: it needs a new layout shared by both
+first-fit runs, which changes their first events.  It also needs a model
+lemma for the sweep's merge case, and the free list's shape after the
+merge.
+
+### 17.8 What the runs do not show
+
+- **No large objects.**  Every block is small, so the allocator's large
+  path and run sweeping are not exercised.
+- **No allocation after a sweep step.**  The sweeping-phase events (the
+  incremental run's young allocations and its minor collection) all come
+  before the first sweep step.  The promotions at 19 go through the
+  sweeping allocator with no page yet swept.
+- **Addresses, pages and the sweep's order are never computed.**  The
+  runs show what every description says, whatever the allocator chooses.
+- **No young write.**  `EWrite` on a young block does not occur;
+  `every_event` counts `EWrite` on major blocks only.
+
+### 17.9 Files and checking
+
+- **New** (23): `GC.Spec.Top.PWPages`, `PWDesc`, `PWAlloc`, `PWMut`,
+  `PWMark`, `PWSweep`, `PWFold`, `PWMinor`, `PWRun`, `PWPre`, `PWCyc`,
+  `PWSeq`, `PWList`, `PWSeqF`, `PWIncA`, `PWInc`, `PWIncB`, `PWIncF`,
+  `TrNames`, `PWNames`, `PWNamesS`, `PWNamesI`, `PWHyps`.
+- **Changed**:
+  - `Makefile`: `PWHyps` added to `ROOT_MODULES`;
+  - this document: §14.7, and §17 added.
+- **No new gap.**  There are no admits and no assumes; every local rlimit
+  is at most 40.
+
+**Checking.**  Each new module was checked at Z3 seeds 0, 1 and 2,
+without `--retry`, after removing its `.checked` file, in dependency
+order.  Times are per module, in seconds:
+
+| Module | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|
+| `PWPages` | 7 | 6 | 8 |
+| `PWDesc` | 17 | 17 | 16 |
+| `PWAlloc` | 27 | 24 | 28 |
+| `PWMut` | 118 | 130 | 128 |
+| `PWMark` | 249 | 270 | 262 |
+| `PWSweep` | 185 | 185 | 179 |
+| `PWFold` | 125 | 124 | 109 |
+| `PWMinor` | 149 | 149 | 145 |
+| `PWRun` | 53 | 48 | 44 |
+| `PWPre` | 476 | 472 | 467 |
+| `PWCyc` | 299 | 302 | 295 |
+| `PWSeq` | 71 | 71 | 71 |
+| `PWList` | 5 | 5 | 5 |
+| `PWSeqF` | 96 | 97 | 97 |
+| `PWIncA` | 191 | 191 | 191 |
+| `PWInc` | 234 | 236 | 235 |
+| `PWIncB` | 47 | 48 | 48 |
+| `PWIncF` | 187 | 187 | 187 |
+| `TrNames` | 6 | 6 | 6 |
+| `PWNames` | 38 | 37 | 37 |
+| `PWNamesS` | 81 | 82 | 83 |
+| `PWNamesI` | 44 | 41 | 42 |
+| `PWHyps` | 15 | 15 | 15 |
+
+Three modules failed at seed 1 or 2 and were made more robust; each was
+then rechecked, with every module after it, at all three seeds:
+- **`PWFold`:** `fold_one` was split.  Its inner step is now the top-level
+  `fold_inner`, and its rlimit came down from 60 to 40.
+- **`PWRun`:** the per-step check that no allocation fails is sealed
+  (`asucc`), so the allocator is not unfolded inside the list predicate.
+- **`PWNamesS`:** the suffix case is now a separate lemma (`named_tail`).
+
+
+**The build.**  `gmake -j6 verify` ran from an empty `_cache` in a scratch
+worktree, with the default `--retry 3` as in CI.  It exited 0 and wrote
+550 cache files (the 527 of §16.18 and the 23 new modules), with 0 errors
+and no warning from the new modules, in 76 min.
