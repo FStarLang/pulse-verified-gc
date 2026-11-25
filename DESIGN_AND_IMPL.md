@@ -1923,6 +1923,41 @@ its size, tag and field.
 **Not done**: no SPOT builds a whole run of the cycle to `Idle` and applies
 `cycle_lossless` (that needs concrete mark steps to the hand-over).
 
+#### Observational equivalence
+
+`GC.Gen.Run.Simulation` relates a real run (`GC.Gen.Run.Step`: the program's
+events and the collector's, in any interleaving) to the program's ideal run
+(`GC.Model.Ideal`: no collector, unlimited memory) through a map from blocks
+to object ids (`GC.Model.Represents`).  `GC.Gen.Run.Observation` states what
+that means for the program as an equality of traces:
+
+- the **ideal trace** `ideal_obs ps`: the field contents the program's reads
+  return, each on the ideal memory just before the read;
+- the **real trace** `real_obs rn`: for each `Read b i` of the run, the word
+  in field `i` of block `b`, read back through the map at that point
+  (`abs_content`).  In a scannable block, a word that points `k` words into a
+  block with id `id` becomes `Ptr { id; k }` and any other word stays a
+  `Word`; in a no-scan block the word stays raw.
+
+`observational_equivalence`: for a well-formed program and any run that
+carries it out (`executes`), `real_obs rn == ideal_obs ps`.  The proof goes by
+induction over the run.  Collector events add nothing to either trace, and a
+read agrees by `reads_agree_state`, because the abstraction inverts
+`value_rep` (`abs_value_rep`).  That inversion needs a pointer to name exactly
+one block, at exactly one offset (`points_into_unique`: major bodies are
+disjoint, `GC.Gen.MarkState.bodies_disjoint`; nursery bodies are disjoint,
+`GC.Gen.Run.NurseryFrame.bodies_disjoint`; a major pointer is never young).
+It also needs a non-pointer word to point into no block, which holds because
+`Word`s lie outside both heaps (`outside_heaps`, trusted in `value_rep`).
+Corollaries:
+`same_program_same_obs` (two runs of the same program, whatever their
+schedules, incremental or stop the world, observe the same values) and
+`physical_equality` / `physical_equality_run` (two words holding valid ideal
+values are equal exactly when the values are, so `==` on real words is `==`
+on the program's values).  `GC.SPOT.Observation` computes the trace of the
+concrete run of `GC.SPOT.MutatorRun`: it is the one read, returning the
+written int.
+
 ## The minor collector
 
 The generational collector adds a nursery. The nursery is modeled separately

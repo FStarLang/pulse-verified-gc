@@ -149,3 +149,46 @@ let write_body_keeps_objects ms o s v =
     write_not_header ms.data 0 (U64.v ms.bump) s v
   end
 #pop-options
+
+/// Two objects of the walk from `pos` whose bodies meet are the same.
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 20 --using_facts_from '* -FStar.UInt.to_vec -FStar.UInt.from_vec -FStar.BitVector'"
+let rec bodies_disjoint_from (ms: minor_state) (pos: nat{pos % 8 == 0})
+                             (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+                             (o1 o2: U64.t) (k1 k2: nat)
+  : Lemma (requires Seq.mem o1 (minor_objects_aux ms.data pos bump) /\
+                    Seq.mem o2 (minor_objects_aux ms.data pos bump) /\
+                    k1 < minor_wosize ms o1 /\ k2 < minor_wosize ms o2 /\
+                    U64.v o1 + 8 * k1 == U64.v o2 + 8 * k2)
+          (ensures o1 == o2)
+          (decreases (bump - pos))
+  = if pos + 8 > bump then ()
+    else begin
+      assert_norm (pow2 57 < pow2 64);
+      let hdr = minor_read_word ms.data (U64.uint_to_t pos) in
+      let wz = U64.v (U64.shift_right hdr 10ul) in
+      if wz = 0 then ()
+      else begin
+        mod8_step pos wz;
+        let next = pos + (wz + 1) * 8 in
+        if next > bump then ()
+        else begin
+          let first = U64.uint_to_t (pos + 8) in
+          let tail = minor_objects_aux ms.data next bump in
+          assert (minor_objects_aux ms.data pos bump == Seq.cons first tail);
+          Seq.Properties.mem_cons first tail;
+          assert (U64.v first == pos + 8);
+          assert (U64.v first - 8 == pos);
+          assert (U64.uint_to_t (U64.v first - 8) == U64.uint_to_t pos);
+          assert (minor_wosize ms first == wz);
+          if o1 = first && o2 = first then ()
+          else if o1 = first then objects_after ms.data next bump o2
+          else if o2 = first then objects_after ms.data next bump o1
+          else bodies_disjoint_from ms next bump o1 o2 k1 k2
+        end
+      end
+    end
+#pop-options
+
+let bodies_disjoint ms o1 o2 k1 k2 =
+  if U64.v ms.bump > minor_heap_size || U64.v ms.bump % 8 <> 0 then ()
+  else bodies_disjoint_from ms 0 (U64.v ms.bump) o1 o2 k1 k2
