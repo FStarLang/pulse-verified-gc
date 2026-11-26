@@ -65,6 +65,11 @@ module ID = FStar.IndefiniteDescription
 /// 1. The accounting along a run
 /// ---------------------------------------------------------------------------
 
+let step_hyps_hold (_: unit) : Lemma step_hyps
+  = GC.Gen.Run.Hoisted.Nursery.nursery_frames ();
+    GC.Gen.Run.Hoisted.Start.start_snapshot_holds ();
+    GC.Gen.Run.Hoisted.MinorPromotes.minor_promotes_holds ()
+
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 let initial_acc (_: unit)
   : Lemma (acc_inv (initial_state ()) (initial_history ()) empty_ids empty_acc)
@@ -207,6 +212,15 @@ let ids_at_idle (#es: list event) (#r: real_state) (rn: run (initial_state ()) e
                  | Major x -> assert (is_allocated r.memory (Major x)); assert (kept h x))
     end
 #pop-options
+
+let nursery_ids (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
+                (ps: list I.program_event)
+  : Lemma (requires I.wf_program ps /\ executes rn ps)
+          (ensures forall (id: I.obj_id).
+                     (account empty_acc (kinds es) ps).nurs id <==>
+                     (exists (o: U64.t). ids_of_run rn (Nursery o) == Some id))
+  = step_hyps_hold ();
+    acc_along rn ps
 
 /// ---------------------------------------------------------------------------
 /// 2. The hoisted run ends idle
