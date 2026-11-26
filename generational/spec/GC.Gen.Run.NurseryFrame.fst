@@ -182,7 +182,11 @@ let rec bodies_disjoint_from (ms: minor_state) (pos: nat{pos % 8 == 0})
           assert (minor_wosize ms first == wz);
           if o1 = first && o2 = first then ()
           else if o1 = first then objects_after ms.data next bump o2
-          else if o2 = first then objects_after ms.data next bump o1
+          else if o2 = first then begin
+            objects_after ms.data next bump o1;
+            assert (minor_wosize ms o2 == wz);
+            assert (U64.v o2 + 8 * k2 < next)
+          end
           else bodies_disjoint_from ms next bump o1 o2 k1 k2
         end
       end
