@@ -73,7 +73,7 @@ let kept_allocated (r: real_state) (h: cycle_history) (x: obj_addr)
 /// The block of an accounted remembered slot is the kept block of its object.
 let rt_block_kept (h: cycle_history) (ids: block_id_map) (a: acc) (m: real_memory)
                   (x: obj_addr) (xid: I.obj_id)
-  : Lemma (requires kept_rep h ids a /\ keyed m ids /\ a.kept xid /\ ids (Major x) == Some xid)
+  : Lemma (requires kept_rep h ids a /\ ids_injective_on_allocated m ids /\ a.kept xid /\ ids (Major x) == Some xid)
           (ensures kept h x)
   = eliminate exists (x2: obj_addr). ids (Major x2) == Some xid /\ kept h x2
     with assert (Major x2 == Major x)
@@ -82,7 +82,7 @@ let rt_block_kept (h: cycle_history) (ids: block_id_map) (a: acc) (m: real_memor
 /// nursery's allocated blocks are the same, and the map is restricted to
 /// what is allocated in `r'`.
 let nurs_kept_frame (r r': real_state) (h: cycle_history) (ids: block_id_map) (a: acc)
-  : Lemma (requires nurs_rep ids a /\ kept_rep h ids a /\ keyed r.memory ids /\
+  : Lemma (requires nurs_rep ids a /\ kept_rep h ids a /\ ids_injective_on_allocated r.memory ids /\
                     (forall (x: obj_addr). kept h x ==> is_allocated r'.memory (Major x)) /\
                     (forall (o: U64.t). is_allocated r'.memory (Nursery o) <==> is_allocated r.memory (Nursery o)))
           (ensures nurs_rep (restrict r'.memory ids) a /\ kept_rep h (restrict r'.memory ids) a /\
@@ -106,7 +106,7 @@ let nurs_kept_frame (r r': real_state) (h: cycle_history) (ids: block_id_map) (a
 /// **The frame for the remembered set**: the same table and slots, and every
 /// kept block keeps its id.
 let rt_frame (r r': real_state) (h: cycle_history) (ids ids': block_id_map) (a: acc)
-  : Lemma (requires rt_rep r ids a /\ kept_rep h ids a /\ keyed r.memory ids /\
+  : Lemma (requires rt_rep r ids a /\ kept_rep h ids a /\ ids_injective_on_allocated r.memory ids /\
                     r'.ref_table == r.ref_table /\
                     (forall (x: obj_addr). kept h x ==> ids' (Major x) == ids (Major x)))
           (ensures rt_rep r' ids' a)

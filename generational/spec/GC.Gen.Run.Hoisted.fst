@@ -366,7 +366,7 @@ let word_points_nowhere (m: real_memory) (w: U64.t)
 /// A pointer value lands in the block holding its object, at its offset.
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let ptr_points_into (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (hd: I.obj_id) (k: nat) (w: U64.t)
-  : Lemma (requires keyed m ids /\ copies_faithful m h im ids /\ I.wf_objects im /\
+  : Lemma (requires ids_injective_on_allocated m ids /\ copies_faithful m h im ids /\ I.wf_objects im /\
                     I.valid_value im (I.Ptr { I.head = hd; I.infix_offset = k }) /\
                     value_rep ids (I.Ptr { I.head = hd; I.infix_offset = k }) w)
           (ensures exists (c: block_addr). ids c == Some hd /\ points_into m w c k)
@@ -381,7 +381,7 @@ let ptr_points_into (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (id
 /// same objects, are isomorphic.**
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
 let iso_from_ids (m1 m2: real_memory) (h1 h2: cycle_history) (im: I.ideal_memory) (ids1 ids2: block_id_map)
-  : Lemma (requires keyed m1 ids1 /\ keyed m2 ids2 /\ copies_faithful m1 h1 im ids1 /\ copies_faithful m2 h2 im ids2 /\
+  : Lemma (requires ids_injective_on_allocated m1 ids1 /\ ids_injective_on_allocated m2 ids2 /\ copies_faithful m1 h1 im ids1 /\ copies_faithful m2 h2 im ids2 /\
                     (forall (b: block_addr). Some? (ids1 b) ==> faithful_block h1 b) /\
                     (forall (b: block_addr). Some? (ids2 b) ==> faithful_block h2 b) /\
                     I.wf_memory im /\ I.wf_objects im /\

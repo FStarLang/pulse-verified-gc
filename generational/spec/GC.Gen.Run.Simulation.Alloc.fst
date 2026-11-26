@@ -94,19 +94,19 @@ let new_ids (r r': real_state) (ids: block_id_map) (n: I.obj_id) : block_id_map 
 
 let new_ids_at (r r': real_state) (ids: block_id_map) (n: I.obj_id) (nb: block_addr)
     (tag: I.tag_t) (size: nat) (init: seq U64.t) (b: block_addr)
-  : Lemma (requires keyed r.memory ids /\ alloc_frame r r' nb tag size init)
+  : Lemma (requires ids_injective_on_allocated r.memory ids /\ alloc_frame r r' nb tag size init)
           (ensures new_ids r r' ids n b == (if b = nb then Some n else ids b))
   = ()
 
 /// Values hold across the map's growth.
 let value_rep_grow (ids ids': block_id_map) (m: real_memory) (v: I.value) (w: U64.t)
-  : Lemma (requires keyed m ids /\ value_rep ids v w /\
+  : Lemma (requires ids_injective_on_allocated m ids /\ value_rep ids v w /\
                     (forall (b: block_addr). is_allocated m b ==> ids' b == ids b))
           (ensures value_rep ids' v w)
   = ()
 
 let content_rep_grow (ids ids': block_id_map) (m: real_memory) (c: I.field_content) (w: U64.t)
-  : Lemma (requires keyed m ids /\ content_rep ids c w /\
+  : Lemma (requires ids_injective_on_allocated m ids /\ content_rep ids c w /\
                     (forall (b: block_addr). is_allocated m b ==> ids' b == ids b))
           (ensures content_rep ids' c w)
   = match c with
@@ -125,7 +125,7 @@ let history_grows (h h': cycle_history) (nb: block_addr) : prop =
 let alloc_block (r r': real_state) (h h': cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (nb: block_addr) (tag: I.tag_t) (size: nat) (f: I.ideal_fields) (init: seq U64.t)
     (b: block_addr) (id: I.obj_id)
-  : Lemma (requires keyed r.memory ids /\ copies_faithful r.memory h im ids /\
+  : Lemma (requires ids_injective_on_allocated r.memory ids /\ copies_faithful r.memory h im ids /\
                     I.wf_event im (I.Alloc tag size f) /\ fields_rep ids f init /\
                     alloc_frame r r' nb tag size init /\ history_grows h h' nb /\
                     new_ids r r' ids (Seq.length im.I.objects) b == Some id)
@@ -183,7 +183,7 @@ let alloc_represents (r r': real_state) (h h': cycle_history) (im: I.ideal_memor
     let below (b: block_addr) (id: I.obj_id) : Lemma (requires ids b == Some id) (ensures id < n) =
       copies_faithful_elim r.memory h im ids b id in
     FStar.Classical.forall_intro_2 (fun b -> FStar.Classical.move_requires (below b));
-    assert (keyed r'.memory ids');
+    assert (ids_injective_on_allocated r'.memory ids');
     introduce forall (b: block_addr) (id: I.obj_id).
         ids' b == Some id ==>
           I.valid_id im' id /\ block_header_rep r'.memory b (Seq.index im'.I.objects id) /\

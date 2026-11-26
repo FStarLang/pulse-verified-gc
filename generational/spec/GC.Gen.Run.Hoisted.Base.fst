@@ -100,7 +100,7 @@ let rep_of (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 1"
 let young_rep (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
               (v: I.value) (w: U64.t)
-  : Lemma (requires keyed m ids /\ copies_faithful m h im ids /\ minor_wf m.nursery /\ blocks_fit m.major /\
+  : Lemma (requires ids_injective_on_allocated m ids /\ copies_faithful m h im ids /\ minor_wf m.nursery /\ blocks_fit m.major /\
                     I.wf_objects im /\ nurs_rep ids a /\ value_rep ids v w /\ I.valid_value im v)
           (ensures (GB.is_young w <==> young a v))
   = match v with

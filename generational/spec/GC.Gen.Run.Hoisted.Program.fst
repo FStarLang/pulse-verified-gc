@@ -62,7 +62,7 @@ let append_empty (s: seq U64.t) : Lemma (s == Seq.append s Seq.empty)
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 1"
 let init_young (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
                (tag: I.tag_t) (size: nat) (f: I.ideal_fields) (init: seq U64.t) (k: nat)
-  : Lemma (requires keyed r.memory ids /\ copies_faithful r.memory h im ids /\ minor_wf r.memory.nursery /\
+  : Lemma (requires ids_injective_on_allocated r.memory ids /\ copies_faithful r.memory h im ids /\ minor_wf r.memory.nursery /\
                     blocks_fit r.memory.major /\ I.wf_objects im /\ nurs_rep ids a /\
                     fields_rep ids f init /\ I.init_usable im f /\ I.Scannable? f /\ k < Seq.length init)
           (ensures is_young (Seq.index init k) <==> alloc_rt a f k)
@@ -269,7 +269,7 @@ let slot_field (m: real_memory) (x: obj_addr) (i: nat) (aa: hp_addr)
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let old_value_young (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
                     (x: obj_addr) (obj: I.obj_id) (i: nat) (aa: hp_addr) (vs: seq I.value)
-  : Lemma (requires keyed m ids /\ copies_faithful m h im ids /\ minor_wf m.nursery /\
+  : Lemma (requires ids_injective_on_allocated m ids /\ copies_faithful m h im ids /\ minor_wf m.nursery /\
                     blocks_fit m.major /\ I.wf_objects im /\ I.wf_memory im /\ nurs_rep ids a /\
                     ids (Major x) == Some obj /\ kept h x /\ I.valid_id im obj /\
                     (Seq.index im.I.objects obj).I.fields == I.Scannable vs /\ i < Seq.length vs /\
@@ -310,7 +310,7 @@ let records_logic (g: heap) (x: obj_addr) (aa: hp_addr) (v: U64.t) (a: acc) (im:
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 let write_major_records (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
                         (x: obj_addr) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value) (aa: hp_addr)
-  : Lemma (requires keyed r.memory ids /\ copies_faithful r.memory h im ids /\ minor_wf r.memory.nursery /\
+  : Lemma (requires ids_injective_on_allocated r.memory ids /\ copies_faithful r.memory h im ids /\ minor_wf r.memory.nursery /\
                     blocks_fit r.memory.major /\ I.wf_objects im /\ I.wf_memory im /\ nurs_rep ids a /\
                     ids (Major x) == Some obj /\ kept h x /\ (scannable r.memory.major x ==> value_rep ids v' v) /\ a.mem == im /\
                     I.valid_value im v' /\ U64.v aa == U64.v x + 8 * i /\

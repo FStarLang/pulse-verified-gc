@@ -42,7 +42,7 @@ module St = GC.Gen.Run.Hoisted.Start
 
 let mfacts (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (a: acc)
            (roots: seq U64.t) : prop =
-  keyed r.memory ids /\ copies_faithful r.memory h im ids /\ I.wf_memory im /\ I.wf_objects im /\
+  ids_injective_on_allocated r.memory ids /\ copies_faithful r.memory h im ids /\ I.wf_memory im /\ I.wf_objects im /\
   minor_wf r.memory.nursery /\ blocks_fit r.memory.major /\
   acc_inv r h ids a /\ a.mem == im /\ rt_ok a /\
   roots_represented ids (ptr_values im.I.roots) roots
@@ -91,7 +91,7 @@ let infix_branch (ms: minor_state) (ids: block_id_map) (o: U64.t) (ob: I.ideal_o
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 let nursery_resolve (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
                     (o: U64.t) (hd: I.obj_id) (k: nat)
-  : Lemma (requires keyed m ids /\ copies_faithful m h im ids /\ minor_wf m.nursery /\ I.wf_objects im /\
+  : Lemma (requires ids_injective_on_allocated m ids /\ copies_faithful m h im ids /\ minor_wf m.nursery /\ I.wf_objects im /\
                     ids (Nursery o) == Some hd /\ I.valid_value im (I.Ptr { I.head = hd; I.infix_offset = k }))
           (ensures (let w = ptr_value (Nursery o) k in
                     resolve_minor m.nursery w == o /\ Seq.mem o (minor_objects m.nursery) /\
@@ -119,7 +119,7 @@ let nursery_resolve (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (id
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 let word_to_nursery (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
                     (v: I.value) (w: U64.t)
-  : Lemma (requires keyed m ids /\ copies_faithful m h im ids /\ minor_wf m.nursery /\ blocks_fit m.major /\
+  : Lemma (requires ids_injective_on_allocated m ids /\ copies_faithful m h im ids /\ minor_wf m.nursery /\ blocks_fit m.major /\
                     I.wf_objects im /\ value_rep ids v w /\ I.valid_value im v /\
                     Seq.mem (resolve_minor m.nursery w) (minor_objects m.nursery))
           (ensures (match v with
@@ -171,7 +171,7 @@ let rec ptr_values_complete (vs: seq I.value) (j: nat)
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let slot_value (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
                (x: obj_addr) (xid: I.obj_id) (j: nat)
-  : Lemma (requires keyed m ids /\ copies_faithful m h im ids /\ blocks_fit m.major /\ I.wf_memory im /\
+  : Lemma (requires ids_injective_on_allocated m ids /\ copies_faithful m h im ids /\ blocks_fit m.major /\ I.wf_memory im /\
                     ids (Major x) == Some xid /\ kept h x /\ Some? (field_value im xid j))
           (ensures (let Some v = field_value im xid j in
                     let s = major_slot x j in

@@ -99,7 +99,7 @@ let app_index (s1 s2: seq U64.t) (m: nat{m < Seq.length s2})
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let rt_extend (r r': real_state) (h: cycle_history) (ids ids': block_id_map) (a a': acc)
               (x0: obj_addr) (xid0: I.obj_id) (newslot: nat -> prop) (ys: seq U64.t)
-  : Lemma (requires rt_rep r ids a /\ kept_rep h ids a /\ keyed r.memory ids /\
+  : Lemma (requires rt_rep r ids a /\ kept_rep h ids a /\ ids_injective_on_allocated r.memory ids /\
                     (forall (x: obj_addr). kept h x ==> ids' (Major x) == ids (Major x)) /\
                     r'.ref_table == Seq.append r.ref_table ys /\
                     ((exists (j: nat). newslot j) ==> ids' (Major x0) == Some xid0 /\ a'.kept xid0) /\
@@ -216,7 +216,7 @@ let alloc_fresh (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: bl
             header_of r.memory h im ids b n
           end in
         FStar.Classical.forall_intro (FStar.Classical.move_requires pick);
-        assert (keyed r'.memory ids')
+        assert (ids_injective_on_allocated r'.memory ids')
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -230,7 +230,7 @@ let pfacts (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_i
   let n = Seq.length im.I.objects in
   let ids' = update_block_ids ids n r e r' in
   let h' = update_history h r e r' in
-  acc_inv r h ids a /\ a.mem == im /\ keyed r.memory ids /\ keyed r'.memory ids' /\
+  acc_inv r h ids a /\ a.mem == im /\ ids_injective_on_allocated r.memory ids /\ ids_injective_on_allocated r'.memory ids' /\
   copies_faithful r.memory h im ids /\ reachable_in_kept h im ids /\
   I.wf_memory im /\ I.wf_objects im /\ I.wf_event im pe /\ translates r.memory ids e pe /\ step r e r' /\
   step_hyps /\
