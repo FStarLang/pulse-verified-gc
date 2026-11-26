@@ -187,7 +187,7 @@ let represents (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: blo
 /// (`fields_rep`); into a scannable block, the value translated
 /// (`value_rep`).  Where the word of a pointer to a nursery block lies (an
 /// offset in the nursery, not a major-heap address) is not part of this:
-/// it follows from `value_rep`, the map being `keyed` and the nursery's
+/// it follows from `value_rep`, the map being injective (`ids_injective_on_allocated`) and the nursery's
 /// shape (`GC.Gen.Run.Simulation.Enabled.word_layout_holds`).
 let translates (m: real_memory) (ids: block_id_map) (e: event) (pe: I.program_event) : prop =
   match e, pe with
