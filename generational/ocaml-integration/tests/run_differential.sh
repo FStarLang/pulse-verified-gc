@@ -10,8 +10,8 @@
 #   - small slices, often (VERGC_SLICE_MIN_WORDS=64
 #     MINOR_HEAP_WORDS=32768): marking and the sweep each span many minor
 #     collections, so the program runs mid-mark for long stretches;
-#   - a tiny mark stack and back-to-back cycles
-#     (VERGC_SLICE_MIN_WORDS=256 VERGC_MARK_STACK=8 VERGC_TRIGGER_MIN_WORDS=0):
+#   - a tiny mark stack (VERGC_SLICE_MIN_WORDS=256 VERGC_MARK_STACK=8;
+#     cycles run back to back in every pacing, as in 4.14):
 #     root darkening and the barrier overflow the stack, so the slices rescan
 #     the heap, and full collections are often requested mid-cycle
 # -- and once otherwise.
@@ -35,7 +35,7 @@ sh -c "$stock" > "$out.expected"
 
 if [ "$mode" = incremental ]; then
   set -- "" "VERGC_SLICE_MIN_WORDS=64 MINOR_HEAP_WORDS=32768" \
-         "VERGC_SLICE_MIN_WORDS=256 VERGC_MARK_STACK=8 VERGC_TRIGGER_MIN_WORDS=0"
+         "VERGC_SLICE_MIN_WORDS=256 VERGC_MARK_STACK=8"
 else
   set -- ""
 fi
