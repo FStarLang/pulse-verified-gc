@@ -7,8 +7,11 @@
 /// word is one the runtime may store (`storable_value`: the obligations the
 /// barrier, the initialising writes and the nursery trust today) and that it
 /// points at a kept block (`in_kept`).  Both follow from the invariant,
-/// `represents`, the value being usable, and the trusted layout of the
-/// event's words (`GC.Model.Represents.word_layout`).  An infix pointer is
+/// `represents` and the value being usable.  Where the word of a pointer to
+/// a nursery block lies (`word_layout`: an offset in the nursery, so not a
+/// major-heap address) is derived (`word_layout_holds`): the map is
+/// injective, so the block is the one `value_rep` names, and the pointer
+/// lies in its body, inside the nursery.  An infix pointer is
 /// resolved through its infix header, which `GC.Model.Ideal.valid_value`
 /// makes name the offset, of at least two words -- what the real heap's
 /// `infix_addr_conds` asks.  Mid-sweep, a kept block is not pending free:
@@ -91,11 +94,30 @@ val reachable_in_use (r: real_state) (h: cycle_history) (im: I.ideal_memory) (id
                     ids (Major x) == Some id /\ I.reachable im id)
           (ensures in_use (GC.Gen.Incremental.phase_free r.phase) r.memory.major x)
 
+/// **Where a pointer to a nursery block lies**: the word of a pointer to a
+/// nursery block, `infix_offset` words in, is not a major-heap address, and
+/// is the block's offset plus the infix offset, in the nursery
+/// (`GC.Gen.Base.to_minor_offset`).
+let word_layout (ids: block_id_map) (v: I.value) (w: U64.t) : prop =
+  match v with
+  | I.Word _ -> True
+  | I.Ptr { head; infix_offset } ->
+      forall (o: U64.t). ids (Nursery o) == Some head ==>
+        ~(GC.Spec.Fields.is_pointer w) /\
+        U64.v (GBase.to_minor_offset w) == U64.v o + 8 * infix_offset
+
+/// **It holds of every valid value's word** (`value_rep`), given the
+/// invariant.
+val word_layout_holds (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
+    (v: I.value) (w: U64.t)
+  : Lemma (requires sim_inv_parts r h im ids /\ I.valid_value im v /\ value_rep ids v w)
+          (ensures word_layout ids v w)
+
 /// **A value the program can use is storable, and points at a kept block.**
 val usable_storable (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (v: I.value) (w: U64.t)
   : Lemma (requires sim_inv_parts r h im ids /\
-                    I.usable im v /\ value_rep ids v w /\ word_layout ids v w)
+                    I.usable im v /\ value_rep ids v w)
           (ensures storable_value r w /\ in_kept r h w)
 
 /// **`GC.Gen.Run.Simulation.program_step_enabled`, given what the

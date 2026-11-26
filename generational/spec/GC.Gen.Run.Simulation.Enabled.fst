@@ -164,6 +164,46 @@ let nursery_ptr_resolves (ms: minor_state) (o: U64.t) (k: nat) (a: U64.t) (hw: U
     end
 #pop-options
 
+/// The word of a pointer `k` words into the nursery block `n`: its offset
+/// plus `k` words, below the major heap.  (The nursery's base address is 0,
+/// `GC.Gen.Run.MinorBase.minor_base_addr_zero`.)
+let nursery_ptr_word (ms: minor_state) (n: U64.t) (k: nat)
+  : Lemma (requires minor_wf ms /\ Seq.mem n (minor_objects ms) /\ k < minor_wosize ms n)
+          (ensures (let w = ptr_value (Nursery n) k in
+                    ~(GC.Spec.Fields.is_pointer w) /\
+                    U64.v (GBase.to_minor_offset w) == U64.v n + 8 * k))
+  = minor_objects_valid ms n;
+    minor_objects_body_bound ms n;
+    GC.Gen.Run.MinorBase.minor_base_addr_zero ();
+    GBase.zero_addr_above_minor ();
+    let a = U64.v n + 8 * k in
+    assert (a < GBase.minor_heap_size);
+    FStar.Math.Lemmas.lemma_mod_plus (U64.v n) k 8;
+    assert (a % 8 == 0);
+    assert_norm (pow2 57 < pow2 64);
+    FStar.Math.Lemmas.small_mod a (pow2 64);
+    let w = ptr_value (Nursery n) k in
+    assert (U64.v GBase.minor_base_addr == 0);
+    assert (U64.v w == a);
+    GBase.to_minor_offset_in_minor_range w
+
+let word_layout_holds r h im ids v w =
+  match v with
+  | I.Word _ -> ()
+  | I.Ptr { head; infix_offset = k } ->
+      shape_facts r;
+      eliminate exists (b: block_addr). ids b == Some head /\ w == ptr_value b k
+      with begin
+        introduce forall (o: U64.t). ids (Nursery o) == Some head ==>
+                    ~(GC.Spec.Fields.is_pointer w) /\
+                    U64.v (GBase.to_minor_offset w) == U64.v o + 8 * k
+        with introduce _ ==> _ with begin
+          assert (b == Nursery o);
+          copies_faithful_elim r.memory h im ids b head;
+          nursery_ptr_word r.memory.nursery o k
+        end
+      end
+
 /// ---------------------------------------------------------------------------
 /// A usable value
 /// ---------------------------------------------------------------------------
@@ -210,6 +250,7 @@ let usable_storable r h im ids v w =
             if Ph.Marking? r.phase then kept_target_ok r h x;
             assert (storable_value r w)
         | Nursery n ->
+            nursery_ptr_word ms n k;
             let a = GBase.to_minor_offset w in
             nursery_ptr_resolves ms n k a hw;
             assert (storable_value r w)
@@ -224,7 +265,7 @@ let usable_storable r h im ids v w =
 let alloc_init_storable (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (tag: I.tag_t) (size: nat) (f: I.ideal_fields) (init: seq U64.t)
   : Lemma (requires sim_inv_parts r h im ids /\ I.wf_event im (I.Alloc tag size f) /\
-                    fields_rep ids f init /\ fields_layout ids f init)
+                    fields_rep ids f init)
           (ensures init_storable r tag init /\ Seq.length init == size)
   = match f with
     | I.Scannable vs ->
@@ -258,7 +299,7 @@ let major_write_enabled (r: real_state) (h: cycle_history) (im: I.ideal_memory) 
     (x: obj_addr) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value)
   : Lemma (requires sim_inv_parts r h im ids /\ I.wf_event im (I.Write obj i v') /\
                     ids (Major x) == Some obj /\
-                    (block_tag r.memory (Major x) < 251 ==> value_rep ids v' v /\ word_layout ids v' v))
+                    (block_tag r.memory (Major x) < 251 ==> value_rep ids v' v))
           (ensures exists (r': real_state). step r (Write (Major x) i v) r')
   = let g = r.memory.major in
     let ms = r.memory.nursery in
@@ -296,7 +337,7 @@ let nursery_write_enabled (r: real_state) (h: cycle_history) (im: I.ideal_memory
     (n: U64.t) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value)
   : Lemma (requires sim_inv_parts r h im ids /\ I.wf_event im (I.Write obj i v') /\
                     ids (Nursery n) == Some obj /\
-                    (block_tag r.memory (Nursery n) < 251 ==> value_rep ids v' v /\ word_layout ids v' v) /\
+                    (block_tag r.memory (Nursery n) < 251 ==> value_rep ids v' v) /\
                     nursery_trusted r (Write (Nursery n) i v))
           (ensures exists (r': real_state). step r (Write (Nursery n) i v) r')
   = let ms = r.memory.nursery in
