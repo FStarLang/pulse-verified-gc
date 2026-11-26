@@ -123,6 +123,7 @@ let abs_content_rep r h im ids b id i =
   no_scan_tag_val ();
   assert (I.wf_objects im);
   assert (I.Scannable? o.I.fields <==> I.tag_scannable o.I.tag);
+  assert (I.Scannable? o.I.fields <==> U64.v o.I.tag < 251);
   let w = block_field r.memory b i in
   (match o.I.fields with
    | I.Scannable vs ->
