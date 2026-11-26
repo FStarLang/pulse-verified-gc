@@ -9,7 +9,7 @@
 ///
 /// `allocated_block_id` (a `block_id_map`) names, for each allocated block of
 /// the real memory, the ideal object it holds: `Some id` exactly at the
-/// allocated blocks (`keyed`), and injective.  It exists only in the proof.
+/// allocated blocks, and injective (`ids_injective_on_allocated`).  It exists only in the proof.
 /// It starts empty and changes one event at a time (`update_block_ids`,
 /// the plan's table): an allocation adds its new block with the next id; a
 /// minor collection moves a live nursery block's entry to its promoted copy
@@ -36,7 +36,7 @@
 ///   3. **`retains_snapshot`**: when the collector is idle, the major heap's
 ///      blocks with an id are exactly the cycle's snapshot and the blocks
 ///      allocated since (`GC.Gen.Run.History.kept`): the memory half.
-/// and `ids` is `keyed`.  The plan's clause 3, **`roots_represented`** (the
+/// and `ids_injective_on_allocated` holds of `ids`.  The plan's clause 3, **`roots_represented`** (the
 /// roots handed to `minor_collect` and `start_cycle` are the ideal roots,
 /// translated), is a property of those calls, not of a state: it is defined
 /// here and assumed at those two calls only (trusted).
@@ -73,7 +73,7 @@ let block_id_map = block_addr -> GTot (option I.obj_id)
 let empty_ids : block_id_map = fun _ -> None
 
 /// `Some` exactly at the allocated blocks, and injective.
-let keyed (m: real_memory) (ids: block_id_map) : prop =
+let ids_injective_on_allocated (m: real_memory) (ids: block_id_map) : prop =
   (forall (b: block_addr). Some? (ids b) <==> is_allocated m b) /\
   (forall (b1 b2: block_addr). Some? (ids b1) /\ ids b1 == ids b2 ==> b1 == b2)
 
@@ -173,7 +173,7 @@ let retains_snapshot (r: real_state) (h: cycle_history) (ids: block_id_map) : pr
 /// **The real state represents the ideal memory**, through `ids`, relative
 /// to the cycle's history `h`.
 let represents (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) : prop =
-  keyed r.memory ids /\ copies_faithful r.memory h im ids /\ covers_reachable im ids /\
+  ids_injective_on_allocated r.memory ids /\ copies_faithful r.memory h im ids /\ covers_reachable im ids /\
   retains_snapshot r h ids
 
 /// ---------------------------------------------------------------------------

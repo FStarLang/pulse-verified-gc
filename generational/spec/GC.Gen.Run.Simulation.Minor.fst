@@ -255,7 +255,7 @@ let ids_image (r: real_state) (roots: seq U64.t) (r': real_state) (ids: block_id
 
 #push-options "--ifuel 1 --z3rlimit 20"
 let ids_not_image (r: real_state) (roots: seq U64.t) (r': real_state) (ids: block_id_map) (x: obj_addr)
-  : Lemma (requires mctx r roots /\ r'.memory.major == gq r roots /\ keyed r.memory ids /\ ~(image r roots x))
+  : Lemma (requires mctx r roots /\ r'.memory.major == gq r roots /\ ids_injective_on_allocated r.memory ids /\ ~(image r roots x))
           (ensures ids_after r roots r' ids (Major x) ==
                    (if FStar.IndefiniteDescription.strong_excluded_middle (is_allocated r'.memory (Major x))
                     then ids (Major x) else None))
@@ -271,7 +271,7 @@ let ids_not_image (r: real_state) (roots: seq U64.t) (r': real_state) (ids: bloc
 /// An old block keeps its id; a block that is neither old nor a copy has none.
 #push-options "--ifuel 1 --z3rlimit 20"
 let ids_old (r: real_state) (roots: seq U64.t) (r': real_state) (ids: block_id_map) (y: obj_addr)
-  : Lemma (requires mctx r roots /\ r'.memory.major == gq r roots /\ keyed r.memory ids /\
+  : Lemma (requires mctx r roots /\ r'.memory.major == gq r roots /\ ids_injective_on_allocated r.memory ids /\
                     is_allocated r.memory (Major y))
           (ensures ids_after r roots r' ids (Major y) == ids (Major y) /\ is_allocated r'.memory (Major y))
   = mctx_elim r roots;
@@ -279,7 +279,7 @@ let ids_old (r: real_state) (roots: seq U64.t) (r': real_state) (ids: block_id_m
     ids_not_image r roots r' ids y
 
 let ids_none (r: real_state) (roots: seq U64.t) (r': real_state) (ids: block_id_map) (x: obj_addr)
-  : Lemma (requires mctx r roots /\ r'.memory.major == gq r roots /\ keyed r.memory ids /\
+  : Lemma (requires mctx r roots /\ r'.memory.major == gq r roots /\ ids_injective_on_allocated r.memory ids /\
                     ~(is_allocated r.memory (Major x)) /\ ~(image r roots x))
           (ensures ids_after r roots r' ids (Major x) == None)
   = mctx_elim r roots;
@@ -383,19 +383,19 @@ let header_rep (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: bl
 [@@"opaque_to_smt"]
 let vctx (r: real_state) (roots: seq U64.t) (r': real_state) (h: cycle_history) (im: I.ideal_memory)
          (ids: block_id_map) : prop =
-  mctx r roots /\ r'.memory.major == gq r roots /\ keyed r.memory ids /\
+  mctx r roots /\ r'.memory.major == gq r roots /\ ids_injective_on_allocated r.memory ids /\
   copies_faithful r.memory h im ids /\ I.wf_memory im /\ I.wf_objects im
 
 let vctx_elim (r: real_state) (roots: seq U64.t) (r': real_state) (h: cycle_history) (im: I.ideal_memory)
               (ids: block_id_map)
   : Lemma (requires vctx r roots r' h im ids)
-          (ensures mctx r roots /\ r'.memory.major == gq r roots /\ keyed r.memory ids /\
+          (ensures mctx r roots /\ r'.memory.major == gq r roots /\ ids_injective_on_allocated r.memory ids /\
                    copies_faithful r.memory h im ids /\ I.wf_memory im /\ I.wf_objects im)
   = reveal_opaque (`%vctx) (vctx r roots r' h im ids)
 
 let vctx_intro (r: real_state) (roots: seq U64.t) (r': real_state) (h: cycle_history) (im: I.ideal_memory)
                (ids: block_id_map)
-  : Lemma (requires mctx r roots /\ r'.memory.major == gq r roots /\ keyed r.memory ids /\
+  : Lemma (requires mctx r roots /\ r'.memory.major == gq r roots /\ ids_injective_on_allocated r.memory ids /\
                     copies_faithful r.memory h im ids /\ I.wf_memory im /\ I.wf_objects im)
           (ensures vctx r roots r' h im ids)
   = reveal_opaque (`%vctx) (vctx r roots r' h im ids)
@@ -965,7 +965,7 @@ let rec reach_forwarded (r: real_state) (roots: seq U64.t) (r': real_state) (h: 
 #push-options "--ifuel 1 --z3rlimit 20"
 let ids_after_cases (r: real_state) (roots: seq U64.t) (r': real_state) (ids: block_id_map) (x: obj_addr)
                     (id: I.obj_id)
-  : Lemma (requires mctx r roots /\ r'.memory.major == gq r roots /\ keyed r.memory ids /\
+  : Lemma (requires mctx r roots /\ r'.memory.major == gq r roots /\ ids_injective_on_allocated r.memory ids /\
                     ids_after r roots r' ids (Major x) == Some id)
           (ensures (exists (m: U64.t). Seq.mem m (minor_objects r.memory.nursery) /\ fwd_of r roots m <> 0UL /\
                       fwd_of r roots m == (x <: U64.t) /\ ids (Nursery m) == Some id) \/
@@ -978,12 +978,12 @@ let ids_after_cases (r: real_state) (roots: seq U64.t) (r': real_state) (ids: bl
     else ids_none r roots r' ids x
 #pop-options
 
-/// The map is keyed after the collection.
+/// The map is still `ids_injective_on_allocated` after the collection.
 #push-options "--ifuel 1 --z3rlimit 30"
-let keyed_after (r: real_state) (roots: seq U64.t) (r': real_state) (ids: block_id_map)
-  : Lemma (requires mctx r roots /\ r'.memory.major == gq r roots /\ keyed r.memory ids /\
+let ids_injective_on_allocated_after (r: real_state) (roots: seq U64.t) (r': real_state) (ids: block_id_map)
+  : Lemma (requires mctx r roots /\ r'.memory.major == gq r roots /\ ids_injective_on_allocated r.memory ids /\
                     r'.memory.nursery == minor_reset r.memory.nursery)
-          (ensures keyed r'.memory (ids_after r roots r' ids))
+          (ensures ids_injective_on_allocated r'.memory (ids_after r roots r' ids))
   = let ids' = ids_after r roots r' ids in
     let ms = r.memory.nursery in
     let dom (b: block_addr) : Lemma (Some? (ids' b) <==> is_allocated r'.memory b) =
@@ -1121,7 +1121,7 @@ let rctx_intro (r: real_state) (roots: seq U64.t) (r': real_state) (h: cycle_his
 /// Idle, the map's major blocks are the kept ones.
 #push-options "--ifuel 1 --z3rlimit 20"
 let retains_after (r': real_state) (h': cycle_history) (ids': block_id_map)
-  : Lemma (requires run_invariant r' h' /\ keyed r'.memory ids')
+  : Lemma (requires run_invariant r' h' /\ ids_injective_on_allocated r'.memory ids')
           (ensures retains_snapshot r' h' ids')
   = ()
 #pop-options
@@ -1136,7 +1136,7 @@ let minor_keeps r h im ids roots r' =
   assert (ids' == ids_after r roots r' ids);
   vctx_intro r roots r' h im ids;
   rctx_intro r roots r' h im ids;
-  keyed_after r roots r' ids;
+  ids_injective_on_allocated_after r roots r' ids;
   assert (forall (x: obj_addr). kept h' x <==> kept h x \/ made r r' x);
   copies_after r roots r' h h' im ids;
   covers_after r roots r' h im ids;
