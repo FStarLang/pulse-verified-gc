@@ -3653,3 +3653,265 @@ then rechecked, with every module after it, at all three seeds:
 worktree, with the default `--retry 3` as in CI.  It exited 0 and wrote
 550 cache files (the 527 of §16.18 and the 23 new modules), with 0 errors
 and no warning from the new modules, in 76 min.
+
+## 18. Plan: the Pulse code under `gc_correct`, T1 and T2 (design only)
+
+The theorems so far are about runs of the model's components (`pc` for
+pages, the first-fit `comps`): records of ghost functions on the byte
+heap, each one an F* spec function (`AT.alloc_tag`, `SA.step`,
+`Promote.collect`, `MStart.darkened`, ...).  This section plans how to
+make them cover the Pulse code that is extracted and runs.  Nothing in it
+is built.
+
+### 18.1 What "covers the code" means
+
+Every Pulse entry point that matters already ends in an exact equality
+with a ghost spec function (§18.2).  The contracts' component functions
+are, mostly, the same spec functions.  So the link is equational, not a
+simulation:
+
+- **A representation of a configuration.**  A new slprop
+  `crep (x: config) (c: concrete)`:
+  - `is_heap h g` with `g == x.w.cmaj`;
+  - the allocator's concrete state (`pages_st t st` with `st == x.ast.ps`,
+    or the first-fit `fp_ref` and phase record);
+  - `is_minor` with `mst d b` young-represented as `x.w.cyng`;
+  - the roots array and the remembered set as `x.w.croots`, `x.w.crem`;
+  - the mark's state (stack, overflow flag, scan positions; see U1);
+  - `pure` facts: `x.ast.lo == low g`, the phase, the sweep progress
+    (ghost).
+- **One wrapper per event kind.**  For each event `e` the wrapper calls the
+  Pulse code and ensures `crep (step pc x e) c'`; its precondition is the
+  event's enabling condition and the run's hypotheses at that point
+  (`run_hyps`), plus the code's own obligations (`modify_ok`, a zeroed
+  forwarding array, ...).
+- **The end theorem.**  Any sequence of wrapper calls from `init` produces
+  ghost configurations that are `exec pc es` for the event list `es` the
+  calls spell; so `run_ok`, `run_hyps` and `no_fail` are facts about the
+  calls, and `gc_correct`, T1 and T2 apply to them.  What chooses the calls
+  (the C driver, the OCaml runtime) stays outside, and so do the
+  obligations it must meet (§18.5).
+
+A code run is a special case of a model run.  Where the code asks more
+than the model (the nursery empty at `Start`, no store into a closure), the
+caller must provide it; the theorems still apply because they hold of
+every run.
+
+Two bodies of code run:
+- **Pages:** the Pulse page allocator, sweep and minor collection
+  (`GC.Impl.Pages.*`), extracted to `mark-and-sweep/pages-c`.  It is not
+  in the OCaml runtime; it has no Pulse mark or barrier of its own.
+- **First-fit, generational:** `GC.Impl.Allocator`,
+  `GC.Impl.FusedSweepCoalesce` and akhil's `GC.Gen.Impl.*` (minor
+  collection, mark slice, start, barrier).  This is what the OCaml runtime
+  calls (`generational/ocaml-integration/verified_gc/alloc_gen.c`).
+
+### 18.2 Component by component
+
+| Component | Pulse code | Proved equal to | The contract's function | Missing link |
+|---|---|---|---|---|
+| Page allocator | `Pages.AllocInc.alloc_ph` | `AT.alloc_tag ph g st wz tag`; on `0` the heap and state unchanged | `PagesAlloc.palloc` = `AT.alloc_tag (iph ph) (gl g s) s.ps sz (tg tag)` | L1 (low bytes), L2 (wrapper) |
+| Page init | `Pages.Init.init` | `In.init_heap g`, `In.init_state`, any `g` | `pinit` from `Init.init_heap zero_heap` | L1, U6 |
+| Page sweep | `Pages.Sweep.start_sweep`; `SweepInc.sweep_unit`, `sweep_slice` | `SSt.start_sweep st`; `SA.step g st vp`; `Inc.slice_from g st c budget` | `pstart` = `SS.start_sweep`; `pstep` = `SA.step` at `q = nextu s.ps.pm cur` | L3 |
+| Pages minor | `Pages.Minor.minor_collect` (`_idle`, `_marking`, `_sweeping`) | the fields of `Promote.collect a ms g st rs`, `a` the phase's `tal` | `PagesMinor.pcollect` = `P.collect (ptal ph st) ms (gl g st) st.ps roots` | L4, U3, U5 |
+| First-fit allocator | `GC.Impl.Allocator.allocate` | `AC.alloc_phase s fp ph wz tag` | `FFAlloc.ffres` = `AP.alloc_at (gph ph) (gl g s) s.fp`, by definition `alloc_phase` | L1, L5 |
+| First-fit init | `Allocator.init_heap` (the bridge writes its own blue block instead) | `init_heap_spec` | `FFAlloc.ffinit` | U6 |
+| First-fit sweep | `FusedSweepCoalesce.sweep_slice_impl` | `SL.sweep_slice` (budgeted) | `FFSweep.ffstep` = one `FS.sweep_step` | L6 |
+| Mark start | `GC.Gen.Impl.start_cycle` (needs the nursery empty) | `MStart.darkened s rs` | `ByteMark.bstart` = `MStart.darkened cmaj (start_ws w)`, roots and nursery fields | L7 |
+| Mark slice | `GC.Gen.Impl.MarkSlice.mark_slice` | relational: `S.mark_steps s sp s2 sp'`, stack, budget, overflow | `ByteMark.bslice`: blacken the lowest-address grey block | **U1** |
+| Barrier store | `GC.Gen.Impl.Barrier.modify_field` | `GB.modify_heap`, `GB.modify_records` | `ByteBarrier.bwrite` (equal to `modify_heap` under conditions: `bwrite_idle_real`, `bwrite_marking_real`) | L9, U3 |
+| Barrier Fill | `Barrier.initialize_field` (one slot) | `write_word`, `initialize_records` | `binit` (a whole block) | L10 |
+| Generational minor | `GC.Gen.Impl.minor_collect(_with)` | `cheney_collect_spec_with ph (phase_free ph) ...` | `FFMinor.pcollect` = `Pages.Promote.collect (fftal ph)` | **U4**, L11 |
+| Nursery allocation | the C fast path (`Alloc_small`); `MinorHeap.minor_alloc` has no functional spec | -- | `Young.yalloc`, a bump from the bottom | **U2** |
+| Roots | C: `caml_do_roots`, `caml_ref_table` | -- | `PagesLive.roots_of` = young roots ++ remembered slots' young values | U3, trusted |
+
+The only `assume val` under all of it is `platform_fits_u64`
+(`GC.Impl.Heap`, duplicated in `GC.Gen.Impl.MinorHeap`).  There are no
+admits in the Pulse code or the spec functions it is proved against.
+
+### 18.3 Gaps that look unprovable as stated
+
+- **U1. The mark slice.**  The contract's `mark` is `{ mstart; mslice :
+  t -> GTot t }`, and `ByteMark.bslice` is one deterministic function
+  (the lowest-address grey block, scanned whole, from `scan_none` back to
+  `scan_none`).  akhil's Pulse slice takes a stack (LIFO), a budget, a
+  partly scanned object kept across slices, and an overflow rescan; its
+  postcondition is relational (`S.mark_steps`).  It is not `bslice`, and
+  its module is read-only.  Options:
+  - (a) **recommended:** give the mark a state and make the slice a
+    relation: `mstate : Type0`, `mslice_rel : t -> mstate -> t -> mstate
+    -> prop`, with the contract `mark_slice_at` (already relational on the
+    model) required of every related pair.  The pages and first-fit
+    instances would take `S.mark_steps` with `MS.marking_cache` as the
+    relation, reusing akhil's shape lemmas.  This changes the
+    specification: `Run.step` stops being a function at `ESlice` (the
+    event must carry the outcome, or the run becomes a relation), and the
+    run invariant's clause (6), T1's replay and T2's construction must be
+    rechecked for the mark events.  Large.
+  - (b) a new Pulse marker that computes `bslice`.  Finding the
+    lowest-address grey block needs a scan per slice; that breaks the
+    rule that verified code be as fast as the prototype.  Not
+    recommended.
+  This is the decision that gates §18.7's step 4.
+- **U2. The nursery's layout.**  The OCaml runtime allocates young objects
+  top-down in C (`Alloc_small` in `memory.h`), and the bridge sets the
+  bump to the bytes used (`alloc_gen.c` around line 1237, which says the
+  verified `[0, bump)` layout does not hold).  `Young.yrepr` reads the
+  nursery bottom-up (`ycabs`).  The C fast path stays trusted either way;
+  to state its obligation, `yalloc` and `yrepr` need a top-down instance.
+  This is a change of the instance (`rep`), not of a theorem, but the
+  minor collection's proofs read the nursery through `Young` facts and
+  would be rechecked.  Medium.  The pages code does not run in OCaml, so
+  for it the bottom-up layout can be kept.
+- **U3. The remembered set.**  `ByteBarrier.remember` adds `(o, i)` at
+  every young store, at the front of a list, duplicates included;
+  `roots_of` takes the slots in that order, and the promotion's addresses
+  depend on the order of the roots.  The C table holds each slot once, in
+  insertion order (`modify_records` reports "add" only if the old value
+  was not young).  The configurations differ in their bytes, so the
+  equality in §18.1 fails.  Options:
+  - (a) **recommended:** change the barrier instance to remember a slot
+    once, at the back (the table's order), and reprove `barrier_ok`
+    (small) and the minor collection's root facts (medium);
+  - (b) prove that duplicates after the first do not change
+    `Promote.collect` (they are forwarded) and trust the bridge to pass
+    the table in the model's order; fragile.
+- **U4. The first-fit minor collection.**  The first-fit contract's
+  collection is our `Pages.Promote.collect (fftal ph)`; the Pulse code is
+  proved against akhil's `cheney_collect_spec_with`.  `Promote` was
+  copied from akhil's statement for statement and then generalised
+  (§12: infix pointers resolved only where followed, every copy through
+  the `tal`), but no lemma equates them.  The equality is provable in
+  principle, by induction on the Cheney loop, given `fftal ph`'s
+  allocation equals `AP.alloc_at ph` (`FFAllocOk.ffree_of` already
+  matches `GI.phase_free`).  Medium-large; risk medium-high where the two
+  loops' invariants differ (the forwarding of infix addresses).
+- **U5. A failed promotion.**  The pages `minor_collect` returns `ok`, and
+  nothing ties it to `Promote.collect`'s `OutOfRoom` (`Cheney.fst` returns
+  `not !oom`).  Strengthen the postcondition of
+  `GC.Impl.Pages.Cheney.promote_all` (ours).  Small.
+- **U6. Initialisation.**  The pages `init` is proved from any heap; the
+  contract starts from `zero_heap`.  Either prove that `init_heap` writes
+  every word the representation reads (then the start heap does not
+  matter; small) or require zeroed memory from the caller (trusted).  For
+  first-fit the bridge writes the first blue block itself; switch it to
+  the verified `init_heap` or keep that trusted.
+
+### 18.4 Linking lemmas
+
+| Id | Lemma | Size | Risk |
+|---|---|---|---|
+| L1 | Along a code run `x.ast.lo == low x.w.cmaj`, so `gl g s == g` (`set_low_self`); the code needs no low-byte state | small | low |
+| L2 | `alloc_ph` as `palloc`: tag `nat`/`U64`, `iph` drops the ghost progress, `NoRoom` keeps `(g, s)` | small | low |
+| L3 | `sweep_unit` at `q = nextu` is `pstep` (the cursor search moves to a ghost argument, or into Pulse); `sweep_slice` is `k` `ESweep` events (`slice_from` as iterated `nextu` and `SA.step`); `freed_words` ghost | small-medium | low |
+| L4 | pages `minor_collect` as `pcollect`: the forwarding map from `represents_fwd farr`, the rewritten roots as `map fwdv croots`, `ok` as U5, the roots as U3 | medium | medium |
+| L5 | `allocate` as `ffres`: the phase record's caches are `state_at` (`phase_rel`), `ffst = { fp; lo }` | small | low |
+| L6 | `sweep_slice_impl` is `k` `ESweep` events (`SL.slice_is_steps`, `sweep_slice_phase`) | small | low |
+| L7 | with an empty nursery `start_ws w` is the major roots, so `bstart` is `start_cycle`'s `darkened` | small | low |
+| L8 | the mark slice: after U1(a), `mark_slice`'s postcondition is the instance's relation | small after U1 | -- |
+| L9 | `modify_field` as `bwrite`: the existing `bwrite_*_real` lemmas, `modify_records` as `remember` after U3, `modify_ok` from `run_hyps` plus "no store into a closure" (trusted, §18.5) | small-medium | medium |
+| L10 | a Fill is `initialize_field` over the block's fields: fold equals `binit` | small | low |
+| L11 | generational `minor_collect` as `FFMinor.pcollect`: U4 plus L4's roots and forwarding | medium | medium |
+| L12 | the glue: `crep`, one wrapper per event, and the end theorem of §18.1 | medium | low |
+| L13 | the run invariant gives each Pulse call's precondition: `GI.phase_shape`, `heap_ok` (well formed, dense), `ref_table_sound_with`/`covers_with`, `MS.marking_cache` | medium | medium |
+
+L13 deserves a word.  The Pulse calls ask for akhil's invariants
+(`phase_shape`, `heap_objects_dense`, the ref table's soundness and
+coverage), which the model's run invariant does not state in his terms.
+For first-fit his preservation lemmas carry them along a run of his spec
+steps; we would show the model's steps are those steps.  For pages,
+`heap_objects_dense` of a page heap must be checked (to check: it is
+`heap_ok`'s only allocator-dependent clause in `MarkSlice`).
+
+### 18.5 What stays trusted
+
+These become explicit hypotheses of the end theorem (preconditions of the
+wrappers), not silent assumptions:
+- **The C bridge.**  Root gathering (`caml_do_roots` into a fixed array of
+  2^18, dropping non-blocks, atoms and out-of-heap values; appending the
+  remembered slots' young targets); writing the rewritten roots back;
+  resetting the table.  Root validity is checked only under `DEBUG`.  The
+  order in which it passes roots matters for U3.
+- **The remembered set** (`caml_ref_table`), stored in C.
+- **Young allocation** (the inline fast path, U2), and the obligation that
+  a new block's fields are initialised before the next collector call.
+- **The mutator's obligations:** no store into a closure (`modify_ok`
+  asks for it; the model allows it), stores only into blocks in use, reads
+  of fields only.
+- **Platform and build:** `GC.Impl.ArrayWord` (little-endian loads and
+  stores in C), `GC.Spec.ZeroAddr` (extern `zero_addr`, `heap_size_u64`
+  and their axioms), `platform_fits_u64`, the runtime override of
+  `minor_heap_size` with `krmlinit_globals`, KaRaMeL and the hand patches
+  in `generational/PATCHES.md`.
+- **Policy:** when to slice, sweep, promote or finish a cycle (pacing,
+  triggers, `ensure_room_for_promotion`).  The theorems hold for every
+  order of events, so policy needs no proof, only that it calls wrappers.
+- **Missing runtime features:** finalisers, weak references and ephemerons
+  fail early (commit e56328ed); nothing about them is claimed.
+
+### 18.6 akhil's run model, and what can be reused
+
+`GC.Gen.Run.Step` defines a run of the real state (nursery, byte heap,
+free list, phase, scan position, ref table) whose collector steps call the
+spec functions his Pulse code is proved against:
+`cheney_collect_spec_with` (minor), `MStart.darkened` (start),
+`GI.major_slice_post` (a slice: `mark_steps` while marking,
+`SL.phase_slice` while sweeping), `GB.modify_heap`/`modify_records` (the
+barrier); the major allocation is relational, tied to first-fit by
+`Invariant.alloc_phase_major_alloc_step`.  `GC.Model.Represents`
+(generational/spec) relates that state to `GC.Model.Ideal`'s object graph
+through a map from blocks to object ids; `Simulation.simulation` and
+`Hoisted.hoisted_isomorphic` are his end results.  It is first-fit and
+generational only; nothing in it mentions the pages functions.
+
+Reusable read-only:
+- **His Pulse equalities** are the ones §18.2 uses for first-fit, mark
+  and barrier; no new Pulse proof is needed there.
+- **Invariant carriers for L13:** `GC.Gen.Incremental`'s
+  `mark_steps_shape`, `mark_slice_shape`, `phase_slice_shape`,
+  `minor_keeps_phase_shape`; `GB.modify_phase_shape`,
+  `modify_heap_facts`, `modify_ref_table`; `MStart.mark_start_shape`; and
+  the run-level `Invariant.Collector`, `Invariant.Minor`,
+  `Invariant.SweepSlice` lemmas.
+- **For U1(a):** his `mark_slice_post`/`S.mark_steps` is the relation to
+  adopt, with its shape lemmas.
+- **For U4:** `GC.Gen.Cheney.Soundness` and
+  `MinorCollectForwarding.normal_image_reachable_subgraph_isomorphism`
+  describe what his collection forwards; they may shorten the equality
+  proof.
+- **Trusted obligations:** his list (`Gen.Impl.fsti` 528-604,
+  `nursery_trusted`, the nursery frames) overlaps §18.5; the two should be
+  stated once and shared.
+
+Not reusable as is: `Represents` and the simulation target the ideal graph,
+not the model heap `mheap`, and his `Hoisted` result overlaps T2 for a
+different model.  Linking the model's runs to his runs (instead of to the
+Pulse code) would give a second route for first-fit; it is not needed for
+this plan.
+
+### 18.7 Order of work
+
+0. **Decisions** (the user's): U1 (the mark's state and relation), U3 (the
+   barrier's remembered set), U2 (a top-down nursery instance, if the OCaml
+   runtime is in scope).
+1. **Pages, without mark and barrier** (our code, every equality exact):
+   L1, U5, U6, L2, L3, L12 for allocation, sweep and the program's events;
+   about 5 modules, low risk.
+2. **Pages minor collection:** L4 with U3; about 3 modules, medium risk.
+3. **First-fit allocator and sweep:** L5, L6, and L13 for them; about 3
+   modules, low-medium risk.
+4. **Mark and barrier:** after U1, the mark instances redone as relations
+   (ByteMark, the run invariant's mark clauses, T1/T2 at `ESlice`), then
+   L7-L10 and L13 for marking; the largest step (10 or more modules), high
+   risk, because it reopens proved theorems.
+5. **Generational minor collection:** U4 and L11; about 4 modules, medium-high
+   risk.
+6. **The end theorems:** for each code base, every code run is a model run
+   with its hypotheses; then `gc_correct`, T1 and T2 apply; and a
+   constructive witness at the Pulse level (vacuity rule), e.g. the pages
+   bench's driver as a sequence of wrapper calls.  About 2 modules.
+
+Steps 1-3 need no change of specification and can start now.  Step 4
+cannot start before U1 is decided.  Without it, the theorems can cover
+allocation, sweep and minor collection of the running code, but not its
+marking.
