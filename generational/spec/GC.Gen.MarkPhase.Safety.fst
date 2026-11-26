@@ -52,15 +52,16 @@ let handover_roots minor g fp sp rs =
   wf_with_parts ();
   let one (r: U64.t)
     : Lemma (Seq.mem r rs /\ ~(GC.Gen.Promote.is_minor_pointer r) /\ is_val_addr r ==>
-             (is_block g (r <: obj_addr) ==> not (SPI.free_incremental zero_addr g (r <: obj_addr))))
+             (is_block g (resolve_object (r <: obj_addr) g) ==>
+              not (SPI.free_incremental zero_addr g (resolve_object (r <: obj_addr) g))))
     = if Seq.mem r rs && is_val_addr r then begin
         let ro : obj_addr = r in
-        if is_block g ro then begin
-          objects_addresses_gt_start zero_addr g ro;
-          RBridge.aligned_gt_ge_plus_mword (U64.v ro) (U64.v zero_addr);
-          resolve_non_infix ro g;
-          assert (GMM.root_refs g rs ro);
-          if is_white ro g then MP.marker_will_reach_elim g sp ro
+        let t = resolve_object ro g in
+        if is_block g t then begin
+          // the root names `t`, possibly through an interior pointer
+          RBridge.resolved_in_objects_is_pointer g ro;
+          assert (GMM.root_refs g rs t);
+          if is_white t g then MP.marker_will_reach_elim g sp t
         end
       end
   in

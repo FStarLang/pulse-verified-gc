@@ -51,15 +51,65 @@ module Cheney = GC.Gen.Cheney
 module Promote = GC.Gen.Promote
 module MP = GC.Spec.MarkPhase
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
+module SPI = GC.Spec.SweepPhase.Intrinsic
+module SPM = GC.Spec.SweepPhase.Mutator
 
-/// What the nursery holds in the major heap: a major pointer in the scan
-/// window of a nursery object points at `w` (such a pointer is never
-/// interior: `minor_major_fields_not_free` makes it a block).
-let nursery_refs (minor: minor_state) (w: obj_addr) : prop =
+/// What the nursery holds in the major heap `g`: a major pointer in the scan
+/// window of a nursery object names `w` (resolved in `g`: the field may be an
+/// interior pointer into a major closure, `minor_major_fields_not_free`).
+let nursery_refs (minor: minor_state) (g: heap) (w: obj_addr) : prop =
   exists (obj: U64.t) (j: nat).
     Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
     is_pointer_field (minor_read_field minor obj j) /\
-    minor_read_field minor obj j == (w <: U64.t)
+    resolve_object ((minor_read_field minor obj j) <: obj_addr) g == w
+
+/// The nursery's major pointers name the same blocks in `g'` as in `g` when
+/// each of them resolves the same way in both.
+val nursery_refs_transfer (minor: minor_state) (g g': heap)
+  : Lemma (requires forall (obj: U64.t) (j: nat).
+                      Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
+                      is_pointer_field (minor_read_field minor obj j) ==>
+                      resolve_object ((minor_read_field minor obj j) <: obj_addr) g' ==
+                      resolve_object ((minor_read_field minor obj j) <: obj_addr) g)
+          (ensures forall (w: obj_addr). nursery_refs minor g' w <==> nursery_refs minor g w)
+
+/// ... which a change keeps that keeps the non-free blocks, their headers
+/// and the blocks of the non-free closures (`SPI.storable_transfer`).
+val nursery_refs_transfer_storable (free free': free_def) (minor: minor_state) (g g': heap)
+  : Lemma (requires GenInv.minor_major_fields_not_free free minor g /\
+                    no_infix_block g /\ no_infix_block g' /\ free_def_ok free' /\
+                    SPI.heads_kept free g g' /\
+                    (forall (y: obj_addr). in_use free g y ==> in_use free' g' y))
+          (ensures forall (w: obj_addr). nursery_refs minor g' w <==> nursery_refs minor g w)
+
+/// ... or that may recolour them (`SPI.storable_transfer_blocks`).
+val nursery_refs_transfer_blocks (free free': free_def) (minor: minor_state) (g g': heap)
+  : Lemma (requires GenInv.minor_major_fields_not_free free minor g /\
+                    no_infix_block g /\ no_infix_block g' /\
+                    (forall (y: obj_addr). in_use free g y ==>
+                       in_use free' g' y /\ SPI.same_block g g' (hd_address y)))
+          (ensures forall (w: obj_addr). nursery_refs minor g' w <==> nursery_refs minor g w)
+
+/// ... and so does recolouring one object.
+val nursery_refs_colour (minor: minor_state) (x: obj_addr) (g: heap) (c: color)
+  : Lemma (forall (w: obj_addr). nursery_refs minor (set_object_color x g c) w <==> nursery_refs minor g w)
+
+/// ... and so does a program write: into the body of a block on the walk,
+/// not blue and not a closure, so every non-free block keeps its header, and
+/// every non-free closure its block.
+val write_keeps_nursery (free: free_def) (minor: minor_state) (g: heap) (x: obj_addr) (a: hp_addr) (v: U64.t)
+  : Lemma (requires free_def_ok free /\ no_infix_block g /\
+                    GenInv.minor_major_fields_not_free free minor g /\
+                    Seq.mem x (objects zero_addr g) /\ ~(is_blue x g) /\ ~(is_closure x g) /\
+                    SPM.in_body g x a)
+          (ensures GenInv.minor_major_fields_not_free free minor (write_word g a v) /\
+                   (forall (w: obj_addr). nursery_refs minor (write_word g a v) w <==> nursery_refs minor g w))
+
+/// Every block the nursery names is not free, when the cross-generation
+/// condition holds.
+val nursery_refs_in_use (free: free_def) (minor: minor_state) (g: heap) (w: obj_addr)
+  : Lemma (requires GenInv.minor_major_fields_not_free free minor g /\ nursery_refs minor g w)
+          (ensures in_use free g w)
 
 /// What the program's roots hold in the major heap: a root that is a major
 /// pointer points (resolved) at `w`.
@@ -69,11 +119,11 @@ let root_refs (g: heap) (roots: seq U64.t) (w: obj_addr) : prop =
 /// What is referenced from outside the major heap, with a nursery: the roots and
 /// the nursery's major pointers.
 let outside_refs_of (minor: minor_state) (g: heap) (roots: seq U64.t) (w: obj_addr) : prop =
-  root_refs g roots w \/ nursery_refs minor w
+  root_refs g roots w \/ nursery_refs minor g w
 
 /// The reset nursery holds nothing.
-val nursery_refs_reset (minor: minor_state) (w: obj_addr)
-  : Lemma (~(nursery_refs (minor_reset minor) w))
+val nursery_refs_reset (minor: minor_state) (g: heap) (w: obj_addr)
+  : Lemma (~(nursery_refs (minor_reset minor) g w))
 
 /// The collection at `Marking`.
 let collect_marking (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t)
@@ -97,7 +147,7 @@ val minor_keeps_marking_inv (minor: minor_state) (g: heap) (fp: U64.t) (roots: s
 /// `extra` that are outside references before (besides the roots and the
 /// nursery's fields) still are after (besides the rewritten roots).  The
 /// completeness of the cycle uses it with `extra` the objects reachable when
-/// the cycle started (`GC.Gen.MarkPhase.Cycle`).
+/// the cycle started (`GC.Gen.Run.Invariant`).
 val minor_keeps_marking_inv_with (extra: obj_addr -> prop)
     (minor: minor_state) (g: heap) (fp: U64.t) (roots: seq U64.t) (sp: MP.scan_pos)
   : Lemma (requires GenInv.collection_shape_with Ph.Marking free_stw minor g fp /\

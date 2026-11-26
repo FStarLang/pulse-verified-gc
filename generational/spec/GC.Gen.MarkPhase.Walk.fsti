@@ -4,7 +4,7 @@
 ///
 /// A dense heap's walk ends at the end of the heap, or one header slot short
 /// of it (`GC.Spec.Walk.reaches_end_of_dense`).  The per-word account of the
-/// cycle (`GC.Gen.Cycle.cycle_lossless`) compares the heap the cycle started
+/// cycle (`GC.Gen.Run.Invariant.cycle_lossless`) compares the heap the cycle started
 /// from with the heap marking hands over, so it needs the walk to end at the
 /// same place.  Recolouring and writes into a block's body keep the walk; an
 /// allocation carves its object out of a free block and the end of that

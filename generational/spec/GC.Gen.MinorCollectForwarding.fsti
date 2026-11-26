@@ -62,14 +62,15 @@ let remembered_targets_in_roots
 
 #push-options "--z3rlimit 10"
 /// Root validity needed to make the target be all concrete post-reachable
-/// vertices: a minor-shaped root must be a real live minor object, while a
-/// non-minor root must be an allocated major object.
+/// vertices: a minor-shaped root must *resolve* to a real live minor object,
+/// while a non-minor root must *name* (resolve to) an allocated major object.
+/// Either may be an interior pointer (`MCFH.roots_valid_for_minor_collection`).
 let roots_valid_for_minor_collection
   (minor: minor_state) (major: heap) (roots: seq U64.t) : prop =
   MCFH.roots_valid_for_minor_collection minor major roots
 #pop-options
 
-/// The same, with the non-minor roots not free.
+/// The same, with the blocks the non-minor roots name not free.
 let roots_valid_with
   (free: free_def) (minor: minor_state) (major: heap) (roots: seq U64.t) : prop =
   MCFH.roots_valid_with free minor major roots
@@ -96,8 +97,9 @@ val normal_classified_root_image_in_rewrite_roots (ph: gc_phase)
   : Lemma
     (requires
       GenInv.collection_shape_with ph free minor major fp /\
+      MCFH.major_roots_named major roots /\
       CheneyBFS.cheney_no_oom ph minor major fp roots /\
-      Seq.mem u (CG.classify_roots minor roots) /\
+      Seq.mem u (CG.classify_roots minor major roots) /\
       MCFH.normal_vertex_ready ph minor major fp roots u)
     (ensures (
       let prom = cheney_promote ph minor major fp roots in
@@ -122,7 +124,7 @@ noeq type ready_src_reach (ph: gc_phase)
   : CG.combined_vertex -> Type =
   | ReadyRoot :
       u:CG.combined_vertex ->
-      (Seq.mem u (CG.classify_roots minor roots) /\
+      (Seq.mem u (CG.classify_roots minor major roots) /\
        CG.mem_cv u (CG.build_combined_graph minor major free) /\
        MCFH.normal_vertex_ready ph minor major fp roots u) ->
       ready_src_reach ph minor major fp free roots u
@@ -172,8 +174,9 @@ val normal_classified_root_image_post_reachable (ph: gc_phase)
   : Lemma
     (requires
       GenInv.collection_shape_with ph free minor major fp /\
+      MCFH.major_roots_named major roots /\
       CheneyBFS.cheney_no_oom ph minor major fp roots /\
-      Seq.mem u (CG.classify_roots minor roots) /\
+      Seq.mem u (CG.classify_roots minor major roots) /\
       MCFH.normal_src_reachable ph minor major fp free roots u)
     (ensures (
       let prom = cheney_promote ph minor major fp roots in
@@ -231,6 +234,7 @@ val ready_src_reach_image_post_reachable (ph: gc_phase)
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
+      MCFH.major_roots_named major roots /\
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom ph minor major fp roots)
     (ensures (
@@ -248,6 +252,7 @@ val ready_image_reachable_is_post_reachable (ph: gc_phase)
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
+      MCFH.major_roots_named major roots /\
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom ph minor major fp roots /\
       ready_image_reachable ph minor major fp free roots w)
@@ -284,6 +289,7 @@ val normal_image_reachable_is_post_reachable (ph: gc_phase)
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
+      MCFH.major_roots_named major roots /\
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom ph minor major fp roots /\
       MCFH.normal_image_reachable ph minor major fp free roots w)
@@ -298,6 +304,7 @@ val normal_image_reachable_is_post_reachable_all (ph: gc_phase)
       RBridge.major_fields_covered minor major free roots /\
       RT.ref_table_covers_with free major slots n /\
       remembered_targets_in_roots major roots slots n /\
+      MCFH.major_roots_named major roots /\
       RBridge.roots_not_free free roots major /\
       CheneyBFS.cheney_no_oom ph minor major fp roots)
     (ensures normal_image_reachable_is_post_reachable_prop ph minor major fp free roots)

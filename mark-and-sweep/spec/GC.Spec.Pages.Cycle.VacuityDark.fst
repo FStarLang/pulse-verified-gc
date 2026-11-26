@@ -234,6 +234,18 @@ let gd_colours (g: heap) (y: obj_addr)
     is_black_iff y (h g); is_black_iff y (gd g)
 #pop-options
 
+/// The empty nursery holds no major pointer.
+let m0_fields (h: heap)
+  : Lemma (GC.Gen.HeapInvariant.minor_major_fields_not_free free_stw V.m0 h)
+  = let f (obj: U64.t) (j: nat)
+      : Lemma (requires Seq.mem obj (minor_objects V.m0) /\ j < minor_scan_wosize V.m0 obj /\
+                        is_pointer_field (minor_read_field V.m0 obj j))
+              (ensures in_use free_stw h (resolve_object ((minor_read_field V.m0 obj j) <: obj_addr) h) /\
+                       infix_addr_wf h (objects zero_addr h) ((minor_read_field V.m0 obj j) <: obj_addr))
+      = minor_reset_objects_not_mem V.m_any obj
+    in
+    GC.Gen.HeapInvariant.minor_major_fields_not_free_intro free_stw V.m0 h f
+
 /// The collector's state at the darkened heap.
 #push-options "--z3rlimit 30"
 let gd_ok (g: heap)
@@ -242,8 +254,8 @@ let gd_ok (g: heap)
     darkened_a g;
     PM.start_facts V.m0 (h g) (st g) (rs g);
     MP.no_black_tri_color (gd g);
-    FStar.Classical.forall_intro V.m0_empty;
-    MP.marking_inv_start (gd g) (GMM.nursery_refs V.m0)
+    FStar.Classical.forall_intro_2 V.m0_empty;
+    MP.marking_inv_start (gd g) (GMM.nursery_refs V.m0 (gd g))
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -307,7 +319,8 @@ let gz_ok (g: heap)
     assert (I.fields_written (gb g) (gz g) x);
     PMP.mark_inv_alloc (gd g) (st g) Wt.wzS;
     assert (PA.alloc I.Marking (gd g) (st g) Wt.wzS == AP.alloc_col Header.Black (gd g) (st g) Wt.wzS);
-    let o = GMM.nursery_refs V.m0 in
+    FStar.Classical.forall_intro_2 V.m0_empty;
+    let o = GMM.nursery_refs V.m0 (gd g) in
     PM.fresh_of_facts (gd g) (gb g) o MP.scan_none x;
     MPA.marking_fresh_write (gb g) o MP.scan_none x a 0UL;
     assert (SPM.field_val (gz g) x 0 == 0UL);
@@ -420,6 +433,7 @@ let gw_ok (g: heap)
   : Lemma (requires V.roomy) (ensures PM.pmark_ok V.m0 (gw g) (sb g) MP.scan_none)
   = gz_ok g;
     write_ok g;
+    m0_fields (gz g);
     PW.pwrite_keeps V.m0 (gz g) (sb g) MP.scan_none (oa g) (oa g <: hp_addr) (n1 g <: U64.t)
 
 /// The heap after the barrier: B grey, A's field N; every other header and
@@ -740,8 +754,9 @@ let gh_ok (g: heap)
     marks g;
     gh_no_grey g;
     CS.mark_steps_inv (sb g) (gw g) MP.scan_none (gh g) MP.scan_none;
-    S.mark_steps_inv (gw g) (gh g) MP.scan_none MP.scan_none (GMM.nursery_refs V.m0);
-    CS.handover_ready (gh g) (sb g) (GMM.nursery_refs V.m0) MP.scan_none
+    FStar.Classical.forall_intro_2 V.m0_empty;
+    S.mark_steps_inv (gw g) (gh g) MP.scan_none MP.scan_none (GMM.nursery_refs V.m0 (gw g));
+    CS.handover_ready (gh g) (sb g) (GMM.nursery_refs V.m0 (gw g)) MP.scan_none
 
 /// ---------------------------------------------------------------------------
 /// The sweep

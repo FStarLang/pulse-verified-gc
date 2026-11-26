@@ -106,7 +106,8 @@ let nur_fields (free: free_def) (g: heap)
   = let h (obj: U64.t) (j: nat)
       : Lemma (requires Seq.mem obj (minor_objects nur) /\ j < minor_scan_wosize nur obj /\
                         is_pointer_field (minor_read_field nur obj j))
-              (ensures in_use free g ((minor_read_field nur obj j) <: obj_addr))
+              (ensures in_use free g (resolve_object ((minor_read_field nur obj j) <: obj_addr) g) /\
+                       infix_addr_wf g (objects zero_addr g) ((minor_read_field nur obj j) <: obj_addr))
       = nur_field obj j
     in
     GenInv.minor_major_fields_not_free_intro free nur g h

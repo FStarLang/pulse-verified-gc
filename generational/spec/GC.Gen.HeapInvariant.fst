@@ -25,6 +25,7 @@ module HeapGraph = GC.Spec.HeapGraph
 module Graph = GC.Spec.Graph
 module FreeListShape = GC.Gen.FreeListShape
 module FLA = GC.Spec.FreeList.Ascending
+module SPI = GC.Spec.SweepPhase.Intrinsic
 
 let free_list_exact (major: heap) (fp: U64.t) : prop = FL.fl_exact major fp
 
@@ -58,9 +59,10 @@ let minor_major_fields_no_blue (minor: minor_state) (major: heap) : prop =
     Seq.mem obj (minor_objects minor) /\
     j < minor_scan_wosize minor obj /\
     is_pointer_field (minor_read_field minor obj j) ==>
-    Seq.mem ((minor_read_field minor obj j) <: obj_addr)
+    infix_addr_wf major (objects zero_addr major) ((minor_read_field minor obj j) <: obj_addr) /\
+    Seq.mem (resolve_object ((minor_read_field minor obj j) <: obj_addr) major)
             (objects zero_addr major) /\
-    ~(is_blue ((minor_read_field minor obj j) <: obj_addr) major)
+    ~(is_blue (resolve_object ((minor_read_field minor obj j) <: obj_addr) major) major)
 
 [@@"opaque_to_smt"]
 let minor_heap_shape (minor: minor_state) : prop =
@@ -162,9 +164,10 @@ let minor_reset_minor_major_fields_no_blue (minor: minor_state) (major: heap)
     : Lemma (ensures (Seq.mem obj (minor_objects reset) /\
                       j < minor_wosize reset obj /\
                       is_pointer_field (minor_read_field reset obj j) ==>
-                      Seq.mem ((minor_read_field reset obj j) <: obj_addr)
+                      infix_addr_wf major (objects zero_addr major) ((minor_read_field reset obj j) <: obj_addr) /\
+                      Seq.mem (resolve_object ((minor_read_field reset obj j) <: obj_addr) major)
                               (objects zero_addr major) /\
-                      ~(is_blue ((minor_read_field reset obj j) <: obj_addr) major)))
+                      ~(is_blue (resolve_object ((minor_read_field reset obj j) <: obj_addr) major) major)))
     =
     minor_reset_objects_not_mem minor obj
   in
@@ -222,7 +225,8 @@ let minor_major_fields_not_free (free: free_def) (minor: minor_state) (major: he
     Seq.mem obj (minor_objects minor) /\
     j < minor_scan_wosize minor obj /\
     is_pointer_field (minor_read_field minor obj j) ==>
-    in_use free major ((minor_read_field minor obj j) <: obj_addr)
+    in_use free major (resolve_object ((minor_read_field minor obj j) <: obj_addr) major) /\
+    infix_addr_wf major (objects zero_addr major) ((minor_read_field minor obj j) <: obj_addr)
 #pop-options
 
 let minor_major_fields_not_free_intro free minor major h =
@@ -231,7 +235,8 @@ let minor_major_fields_not_free_intro free minor major h =
     (Seq.mem obj (minor_objects minor) /\
      j < minor_scan_wosize minor obj /\
      is_pointer_field (minor_read_field minor obj j) ==>
-     in_use free major ((minor_read_field minor obj j) <: obj_addr))
+     in_use free major (resolve_object ((minor_read_field minor obj j) <: obj_addr) major) /\
+     infix_addr_wf major (objects zero_addr major) ((minor_read_field minor obj j) <: obj_addr))
     = if Seq.mem obj (minor_objects minor) &&
          j < minor_scan_wosize minor obj &&
          is_pointer_field (minor_read_field minor obj j)
@@ -241,6 +246,78 @@ let minor_major_fields_not_free_intro free minor major h =
 
 let minor_major_fields_not_free_elim free minor major obj j =
   reveal_opaque (`%minor_major_fields_not_free) (minor_major_fields_not_free free minor major)
+
+let minor_major_fields_not_free_storable free minor major obj j =
+  if is_pointer_field (minor_read_field minor obj j)
+  then minor_major_fields_not_free_elim free minor major obj j
+
+let minor_major_fields_not_free_ordinary free minor major obj j =
+  minor_major_fields_not_free_elim free minor major obj j;
+  resolve_non_infix ((minor_read_field minor obj j) <: obj_addr) major
+
+let minor_major_fields_not_free_intro_ordinary free minor major h =
+  let h' (obj: U64.t) (j: nat)
+    : Lemma (requires Seq.mem obj (minor_objects minor) /\
+                      j < minor_scan_wosize minor obj /\
+                      is_pointer_field (minor_read_field minor obj j))
+            (ensures in_use free major (resolve_object ((minor_read_field minor obj j) <: obj_addr) major) /\
+                     infix_addr_wf major (objects zero_addr major) ((minor_read_field minor obj j) <: obj_addr))
+    = h obj j;
+      let v : obj_addr = minor_read_field minor obj j in
+      assert (Seq.mem v (objects zero_addr major));
+      assert (~(is_infix v major));
+      resolve_non_infix v major;
+      infix_addr_wf_non_infix major (objects zero_addr major) v
+  in
+  minor_major_fields_not_free_intro free minor major h'
+
+let minor_major_fields_not_free_transfer free free' minor g g' =
+  let h (obj: U64.t) (j: nat)
+    : Lemma (requires Seq.mem obj (minor_objects minor) /\
+                      j < minor_scan_wosize minor obj /\
+                      is_pointer_field (minor_read_field minor obj j))
+            (ensures in_use free' g' (resolve_object ((minor_read_field minor obj j) <: obj_addr) g') /\
+                     infix_addr_wf g' (objects zero_addr g') ((minor_read_field minor obj j) <: obj_addr))
+    = minor_major_fields_not_free_elim free minor g obj j;
+      SPI.storable_transfer g g' free free' (minor_read_field minor obj j)
+  in
+  minor_major_fields_not_free_intro free' minor g' h
+
+let minor_major_fields_not_free_transfer_blocks free free' minor g g' =
+  let h (obj: U64.t) (j: nat)
+    : Lemma (requires Seq.mem obj (minor_objects minor) /\
+                      j < minor_scan_wosize minor obj /\
+                      is_pointer_field (minor_read_field minor obj j))
+            (ensures in_use free' g' (resolve_object ((minor_read_field minor obj j) <: obj_addr) g') /\
+                     infix_addr_wf g' (objects zero_addr g') ((minor_read_field minor obj j) <: obj_addr))
+    = minor_major_fields_not_free_elim free minor g obj j;
+      SPI.storable_transfer_blocks g g' free free' (minor_read_field minor obj j)
+  in
+  minor_major_fields_not_free_intro free' minor g' h
+
+let minor_major_fields_not_free_recolour free minor x g c =
+  let g' = set_object_color x g c in
+  let objs = objects zero_addr g in
+  let h (obj: U64.t) (j: nat)
+    : Lemma (requires Seq.mem obj (minor_objects minor) /\
+                      j < minor_scan_wosize minor obj /\
+                      is_pointer_field (minor_read_field minor obj j))
+            (ensures in_use free g' (resolve_object ((minor_read_field minor obj j) <: obj_addr) g') /\
+                     infix_addr_wf g' (objects zero_addr g') ((minor_read_field minor obj j) <: obj_addr))
+    = let v : obj_addr = minor_read_field minor obj j in
+      minor_major_fields_not_free_elim free minor g obj j;
+      color_change_preserves_resolve x v g c;
+      color_change_preserves_is_infix x v g c;
+      color_change_preserves_wosize_any x v g c;
+      FStar.Classical.forall_intro (fun (o: obj_addr) -> color_change_preserves_is_closure x o g c);
+      FStar.Classical.forall_intro (fun (o: obj_addr) -> color_change_preserves_wosize_any x o g c);
+      infix_addr_wf_congr g g' objs v
+  in
+  minor_major_fields_not_free_intro free minor g' h
+
+let minor_major_fields_not_free_weaken free free' minor g =
+  minor_major_fields_not_free_intro free' minor g
+    (fun obj j -> minor_major_fields_not_free_elim free minor g obj j)
 
 let minor_major_fields_not_free_stw minor major =
   reveal_opaque (`%minor_major_fields_not_free) (minor_major_fields_not_free free_stw minor major);
@@ -289,7 +366,8 @@ let collection_shape_with_after_minor_reset ph free minor major fp =
     (requires Seq.mem obj (minor_objects reset) /\
               j < minor_scan_wosize reset obj /\
               is_pointer_field (minor_read_field reset obj j))
-    (ensures in_use free major ((minor_read_field reset obj j) <: obj_addr))
+    (ensures in_use free major (resolve_object ((minor_read_field reset obj j) <: obj_addr) major) /\
+             infix_addr_wf major (objects zero_addr major) ((minor_read_field reset obj j) <: obj_addr))
     = minor_reset_objects_not_mem minor obj
   in
   minor_major_fields_not_free_intro free reset major h;

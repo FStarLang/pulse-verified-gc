@@ -107,8 +107,9 @@ val cheney_promote_in_use_origin (ph: gc_phase)
 
 /// Promotion keeps well-formedness given what counts as free.  An old block's fields and
 /// header are untouched; a promoted object's fields are its nursery fields,
-/// which point to non-free blocks (`minor_major_fields_not_free`) or into the
-/// nursery (not major pointers).
+/// which resolve to non-free blocks and are well formed if interior
+/// (`minor_major_fields_not_free`) or point into the nursery (not major
+/// pointers).
 val cheney_promote_preserves_wf_with (ph: gc_phase)
   (free: free_def) (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t)

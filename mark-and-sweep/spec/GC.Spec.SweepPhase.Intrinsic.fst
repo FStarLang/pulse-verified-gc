@@ -512,6 +512,33 @@ let storable_transfer g g' free free' w =
   end
 #pop-options
 
+#push-options "--z3rlimit 20"
+let storable_transfer_blocks g g' free free' w =
+  if is_pointer w then begin
+    let dst : obj_addr = w in
+    let t = resolve_object dst g in
+    if is_infix dst g then begin
+      infix_addr_wf_elim g (objects zero_addr g) dst;
+      parent_closure_addr_nat_spec dst g;
+      resolve_infix_spec dst g;
+      hd_address_spec dst; hd_address_spec t;
+      colour_of g t; colour_of g' t;
+      W.bnext_facts g (hd_address t);
+      assert (same_block g g' (hd_address t));
+      assert (read_word g' (hd_address dst) == read_word g (hd_address dst));
+      resolve_object_locality dst g g';
+      is_closure_spec t g; is_closure_spec t g';
+      assert (in_use free' g' t);
+      infix_addr_wf_transfer g g' (objects zero_addr g) (objects zero_addr g') dst
+    end else begin
+      resolve_non_infix dst g;
+      assert (in_use free' g' dst);
+      resolve_non_infix dst g';
+      infix_addr_wf_non_infix g' (objects zero_addr g') dst
+    end
+  end
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Start
 /// ---------------------------------------------------------------------------

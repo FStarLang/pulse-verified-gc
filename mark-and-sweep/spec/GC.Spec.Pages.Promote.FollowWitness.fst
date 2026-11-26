@@ -12,9 +12,10 @@
 ///     of offset 0: the address `A + 16` past it reads as infix.
 ///
 /// The promotion's conditions hold of them (`fields_follow`, `roots_follow`
-/// with a root at `A`, `major_targets`); akhil's do not (`minor_infix_wf`
-/// fails at `A + 16`, `minor_major_fields_not_free` at `C + 16`).  The
-/// heap's size is the page witnesses' assumption (`n_pages > 0`).
+/// with a root at `A`, and akhil's `minor_major_fields_not_free`, which PR
+/// #58 states of the block a field resolves to, so `C + 16` meets it);
+/// akhil's `minor_infix_wf` does not (it fails at `A + 16`).  The heap's size is the page witnesses' assumption
+/// (`n_pages > 0`).
 
 module GC.Spec.Pages.Promote.FollowWitness
 
@@ -377,35 +378,26 @@ let target_one (obj: U64.t) (j: nat)
     else closure_facts ()
 #pop-options
 
-let targets (_: unit) : Lemma (requires big) (ensures Fw.major_targets free_stw nur3 g3)
-  = Fw.major_targets_intro free_stw nur3 g3 target_one
-
 /// ---------------------------------------------------------------------------
-/// What akhil's conditions reject
+/// akhil's conditions: one rejects, one accepts
 /// ---------------------------------------------------------------------------
 
-/// `A + 16` reads as infix with offset 0: not the infix header of a closure.
-let not_infix_wf (_: unit) : Lemma (~(minor_infix_wf nur3))
+/// `A + 16` reads as infix ...
+let infix_24 (_: unit) : Lemma (is_infix_in_minor nur3 24UL == true)
   = room ();
-    a_known ();
-    reveal_opaque (`%minor_infix_wf) (minor_infix_wf nur3);
-    assert (is_infix_in_minor nur3 24UL)
+    a_known ()
 
-/// The infix pointer is not a block.
-#push-options "--z3rlimit 30"
-let not_fields_not_free (_: unit)
-  : Lemma (requires big) (ensures ~(GenInv.minor_major_fields_not_free free_stw nur3 g3))
-  = closure_facts ();
-    fields ();
+/// ... with offset 0: not the infix header of a closure.
+let not_infix_wf (_: unit) : Lemma (~(minor_infix_wf nur3))
+  = infix_24 ();
     a_known ();
-    mem_objects objA;
-    minor_scan_wosize_cases nur3 objA;
-    za_facts ();
-    addrs ();
-    assert (is_pointer_field pW);
-    if FStar.IndefiniteDescription.strong_excluded_middle (GenInv.minor_major_fields_not_free free_stw nur3 g3) then
-      GenInv.minor_major_fields_not_free_elim free_stw nur3 g3 objA 0
-#pop-options
+    reveal_opaque (`%minor_infix_wf) (minor_infix_wf nur3)
+
+/// akhil's condition on the nursery's major pointers, as PR #58 states it
+/// (of the block each resolves to), accepts the infix pointer.
+let fields_not_free (_: unit)
+  : Lemma (requires big) (ensures GenInv.minor_major_fields_not_free free_stw nur3 g3)
+  = GenInv.minor_major_fields_not_free_intro free_stw nur3 g3 target_one
 
 /// ---------------------------------------------------------------------------
 /// The witness
@@ -413,20 +405,19 @@ let not_fields_not_free (_: unit)
 
 /// **The promotion accepts a young field holding an infix pointer into an
 /// old closure, and one holding an int that looks like an infix header**;
-/// akhil's conditions reject both.
+/// akhil's `minor_infix_wf` rejects the second, and his
+/// `minor_major_fields_not_free` (since PR #58) accepts the first.
 let accepted (_: unit)
   : Lemma (requires Ly.n_pages > 0)
           (ensures minor_wf nur3 /\ Fw.fields_follow nur3 /\ Fw.roots_follow nur3 roots3 /\
-                   Fw.major_targets free_stw nur3 g3 /\
-                   ~(minor_infix_wf nur3) /\ ~(GenInv.minor_major_fields_not_free free_stw nur3 g3) /\
+                   GenInv.minor_major_fields_not_free free_stw nur3 g3 /\ ~(minor_infix_wf nur3) /\
                    minor_read_field nur3 objA 0 == pW /\ minor_read_field nur3 objA 1 == w249 /\
                    (let p : obj_addr = (big_of_pages (); za_facts (); addrs (); pW) in
                     is_infix p g3 /\ ~(in_use free_stw g3 p)))
   = big_of_pages ();
     wf_objects ();
     follows ();
-    targets ();
     not_infix_wf ();
-    not_fields_not_free ();
+    fields_not_free ();
     fields ();
     closure_facts ()

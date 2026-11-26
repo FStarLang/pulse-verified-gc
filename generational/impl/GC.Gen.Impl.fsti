@@ -142,12 +142,13 @@ let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
 ///     heap and the free-list head -- what a full collection demands and
 ///     restores;
 ///   * `Ph.Marking`: the minor collection's shape at `free_stw` and the
-///     marking invariant at the scan position `sp`, with the nursery's major
-///     pointers as outside references (`GMM.nursery_refs`): `start_cycle`
+///     marking invariant at the scan position `sp`, with the blocks the
+///     nursery's major pointers name (resolved: such a pointer may be
+///     interior) as outside references (`GMM.nursery_refs`): `start_cycle`
 ///     enters it, the mark slices (`major_slice`) run in it;
 ///   * `Ph.Sweeping c`: the sweep phase at the cursor `c`
 ///     (`SPI.sweep_inv_incremental s fp c`), the nursery's shape, and that the
-///     nursery's major pointers point at non-free objects
+///     nursery's major pointers name non-free objects
 ///     (`GenInv.minor_major_fields_not_free` for `SPI.free_incremental c`:
 ///     free is blue, or pending free -- white in front of the cursor).
 ///

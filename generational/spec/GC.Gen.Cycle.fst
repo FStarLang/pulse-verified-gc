@@ -32,7 +32,7 @@ let handover_sweep_start minor g sp fp budget gh sp' =
   GI.phase_shape_marking minor gh fp sp';
   GenInv.collection_shape_with_elim Ph.Marking free_stw minor gh fp;
   GenInv.major_shape_with_elim Ph.Marking free_stw gh fp;
-  MP.marking_done_sweep_start gh (GMM.nursery_refs minor) sp' fp
+  MP.marking_done_sweep_start gh (GMM.nursery_refs minor gh) sp' fp
 
 /// What the two runs give once the sweep has started: from marking, the
 /// black objects of the heap it handed over are the snapshot's, and

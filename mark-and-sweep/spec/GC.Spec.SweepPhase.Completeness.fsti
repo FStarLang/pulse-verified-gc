@@ -56,8 +56,8 @@
 ///
 /// `since` is an argument here.  Any larger set accounts for as much
 /// (`survivor_or_new_weaken`), and any smaller one keeps the converse, so
-/// each half alone is weak; a run of the sweep phase fixes `since`
-/// (`GC.Gen.SweepPhase.Cycle`).
+/// each half alone is weak; a run of the cycle fixes `since`, the addresses
+/// allocated or promoted during it (`GC.Gen.Run.Invariant`).
 
 module GC.Spec.SweepPhase.Completeness
 

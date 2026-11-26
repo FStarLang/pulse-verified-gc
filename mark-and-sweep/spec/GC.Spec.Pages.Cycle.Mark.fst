@@ -91,7 +91,7 @@ module TF = GC.Spec.Pages.Cycle.AllocTagged
 /// invariant, and the marking invariant with the nursery's fields as
 /// outside references.
 let pmark_ok (minor: minor_state) (g: heap) (st: pstate) (sp: MP.scan_pos) : prop =
-  PMP.mark_inv g st /\ MP.marking_inv g (GMM.nursery_refs minor) sp
+  PMP.mark_inv g st /\ MP.marking_inv g (GMM.nursery_refs minor g) sp
 
 /// What the cycle starts from: the page `Idle` invariant, the nursery
 /// empty, every root a darkenable object.
@@ -623,7 +623,7 @@ let write_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
                     MPC.cycle_write (MC.snapshot g0 rs since) g x a v)
           (ensures pmark_run_inv g0 rs since (GB.modify_heap Ph.Marking g a v) sp)
   = let r = GMC.reachable_at_start g0 rs in
-    let o (w: obj_addr) : prop = GMM.nursery_refs minor w \/ r w in
+    let o (w: obj_addr) : prop = GMM.nursery_refs minor g w \/ r w in
     GC.Gen.Incremental.phase_free_marking ();
     assert (MP.marking_inv g o sp);
     MM.marking_write_barrier g o sp x a v;
@@ -872,9 +872,10 @@ let nursery_stw (minor: minor_state) (g: heap) (s: obj_addr -> prop)
   = let h (obj: U64.t) (j: nat)
       : Lemma (requires Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
                         is_pointer_field (minor_read_field minor obj j))
-              (ensures in_use free_stw g ((minor_read_field minor obj j) <: obj_addr))
+              (ensures in_use free_stw g (resolve_object ((minor_read_field minor obj j) <: obj_addr) g) /\
+                       infix_addr_wf g (objects zero_addr g) ((minor_read_field minor obj j) <: obj_addr))
       = GenInv.minor_major_fields_not_free_elim (MPC.outside_snapshot s) minor g obj j;
-        MPC.in_use_outside_snapshot s g ((minor_read_field minor obj j) <: obj_addr)
+        MPC.in_use_outside_snapshot s g (resolve_object ((minor_read_field minor obj j) <: obj_addr) g)
     in
     GenInv.minor_major_fields_not_free_intro free_stw minor g h
 
@@ -966,7 +967,7 @@ let phandover (#g0: heap) (#rs: seq U64.t) (#g: heap) (#st: pstate) (#sp: MP.sca
                    (forall (x: obj_addr). since x ==> SPC.survived_mark gh x) /\
                    W.walk_end g0 zero_addr == heap_size /\
                    W.walk_end gh zero_addr == heap_size /\
-                   PMP.mark_inv gh st /\ MP.marking_inv gh (GMM.nursery_refs minor) sp')
+                   PMP.mark_inv gh st /\ MP.marking_inv gh (GMM.nursery_refs minor g) sp')
   = pmark_run_account r;
     slice_inv g0 rs since minor g st sp gh sp';
     let black (x: obj_addr)
@@ -978,6 +979,6 @@ let phandover (#g0: heap) (#rs: seq U64.t) (#g: heap) (#st: pstate) (#sp: MP.sca
     FStar.Classical.forall_intro (FStar.Classical.move_requires black);
     MPC.account_marked (MC.snapshot g0 rs since) gh;
     CS.mark_steps_inv st g sp gh sp';
-    S.mark_steps_inv g gh sp sp' (GMM.nursery_refs minor);
+    S.mark_steps_inv g gh sp sp' (GMM.nursery_refs minor g);
     CS.mc_walk gh st
 #pop-options

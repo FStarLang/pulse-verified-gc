@@ -63,9 +63,9 @@
 /// non-free block is in `snapshot`, so every address outside `snapshot` is freed.
 ///
 /// These lemmas take the snapshot as an argument, and the set of every
-/// address satisfies them.  A run of the cycle fixes it:
-/// `GC.Gen.MarkPhase.Cycle` (marking, with snapshot-at-the-beginning) and
-/// `GC.Gen.Cycle` (the whole cycle, and that it is lossless).
+/// address satisfies them.  A run of the cycle fixes it
+/// (`GC.Gen.Run.Invariant`: the cycle's snapshot, snapshot-at-the-beginning
+/// while marking, and that the cycle is lossless, `cycle_lossless`).
 
 module GC.Spec.MarkPhase.Completeness
 

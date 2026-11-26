@@ -267,7 +267,7 @@ let old_src (#s: Type0) (a: tal s) (un: free_def) (g0 g: heap) (src dst: obj_add
 #push-options "--z3rlimit 40"
 let new_src (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g: heap) (m: U64.t) (src dst: obj_addr)
   : Lemma (requires free_def_ok a.free /\ free_def_ok un /\ well_formed_heap_with un g0 /\
-                    major_targets un minor g0 /\
+                    GenInv.minor_major_fields_not_free un minor g0 /\
                     (forall (h: heap) (y: obj_addr). in_use un h y ==> in_use a.free h y) /\
                     olds a g0 g /\ copy_of a minor g0 g m (src <: U64.t) /\
                     scannable g src /\ points_to g src dst)
@@ -282,7 +282,7 @@ let new_src (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g: he
     with begin
       assert (j < minor_scan_wosize minor m);
       assert (minor_read_field minor m j == (dst <: U64.t));
-      major_targets_elim un minor g0 m j;
+      GenInv.minor_major_fields_not_free_elim un minor g0 m j;
       free_def_ok_elim a.free;
       old_target_wf a un g0 g dst
     end
@@ -296,7 +296,7 @@ let new_src (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g: he
 let promoted_wf_w (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g: heap) (fwd: forwarding_map)
   : Lemma (requires free_def_ok a.free /\ free_def_ok un /\ well_formed_heap_with un g0 /\
                     well_formed_heap_with a.free g /\
-                    major_targets un minor g0 /\
+                    GenInv.minor_major_fields_not_free un minor g0 /\
                     (forall (h: heap) (y: obj_addr). in_use un h y ==> in_use a.free h y) /\
                     olds a g0 g /\ news a minor g0 g fwd)
           (ensures well_formed_heap_with un g)
@@ -323,8 +323,7 @@ let promoted_wf (#s: Type0) (a: tal s) (un: free_def) (minor: minor_state) (g0 g
                     (forall (h: heap) (y: obj_addr). in_use un h y ==> in_use a.free h y) /\
                     olds a g0 g /\ news a minor g0 g fwd)
           (ensures well_formed_heap_with un g)
-  = targets_of_not_free un minor g0;
-    promoted_wf_w a un minor g0 g fwd
+  = promoted_wf_w a un minor g0 g fwd
 
 /// ---------------------------------------------------------------------------
 /// The whole collection

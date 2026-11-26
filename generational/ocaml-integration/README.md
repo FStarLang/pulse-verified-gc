@@ -223,6 +223,13 @@ over that resolved sequence.  `GC.Gen.Impl.gen_gc_named_root_in_stack` reads the
 ordinary case back out: a root that resolves to itself is on the mark stack
 literally.  See Phase H of `docs/minor-infix-support-plan.md`.
 
+The same predicate's *major* branch is resolved as well: a non-nursery root need
+only name (resolve to) a non-blue major object, through a well-formed interior
+pointer if it is one.  That is the root a promoted `let rec f .. and g ..` leaves
+on the stack at the next minor collection, and `scan_minor_root` passes it
+through unchanged.  A debug build (`-DDEBUG`, e.g. `libcamlrund`) audits this
+after every root scan (`debug_check_major_roots` in `verified_gc/alloc_gen.c`).
+
 **The test is sensitive.** Rebuilding the runtime with the pre-fix
 `check_and_darken_bounded` — the version that darkened the raw field value
 instead of resolving `infix_tag` targets to `v - wosize*8` — makes group 5 fail

@@ -26,14 +26,13 @@
 /// copied; `update_agrees` is stated for the allocator's free.
 ///
 /// Design doc §12: the lemmas are proved from `mpre_mark_w` (the nursery's
-/// fields and roots followed safely, its major pointers resolving to blocks
-/// in use), and the marking invariant's lemma for any outside references
+/// fields and roots followed safely, and akhil's `minor_major_fields_not_free`:
+/// its major pointers resolve to blocks in use), and the marking invariant's lemma for any outside references
 /// that hold the roots, `extra`, and what the nursery's major pointers
-/// resolve to (`m_keeps_marking_inv_core`).  `m_keeps_marking_inv_r` takes
-/// the nursery's references resolved (`outside_refs_r`: an infix pointer
-/// into a major closure refers to the closure); akhil's form, with his
-/// `outside_refs_of`, is `m_keeps_marking_inv_with`, kept with the other
-/// lemmas from `mpre_mark`.
+/// resolve to (`m_keeps_marking_inv_core`).  `m_keeps_marking_inv_r` is
+/// akhil's `m_keeps_marking_inv_with` (his `outside_refs_of`, which since PR
+/// #58 names the block an infix pointer resolves to) under `mpre_mark_w`;
+/// his form is kept, with the other lemmas from `mpre_mark`.
 
 module GC.Spec.Pages.Promote.Mark
 
@@ -99,7 +98,7 @@ let mpre_facts (minor: minor_state) (g: heap) (st: pstate)
 /// use.
 let mpre_mark_w (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t) : prop =
   PMP.mark_inv g st /\ minor_wf minor /\ fields_follow minor /\ roots_follow minor roots /\
-  major_targets free_stw minor g
+  GenInv.minor_major_fields_not_free free_stw minor g
 
 let mpre_facts_w (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t)
   : Lemma (requires mpre_mark_w minor g st roots)
@@ -115,8 +114,7 @@ let mark_weaken (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t)
   = mpre_facts minor g st;
     fields_of_infix_wf minor;
     roots_of_infix_wf minor roots;
-    free_stw_ok ();
-    targets_of_not_free free_stw minor g
+    free_stw_ok ()
 
 /// The heap after.
 let gm (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t) : GTot heap =
@@ -242,7 +240,7 @@ let update_agrees (free: free_def) (pm: heap) (un: free_def) (fwd: Promote.forwa
 #push-options "--z3rlimit 30"
 let m_wf_with_w (un: free_def) (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t)
   : Lemma (requires mpre_mark_w minor g st roots /\ free_def_ok un /\ well_formed_heap_with un g /\
-                    major_targets un minor g /\
+                    GenInv.minor_major_fields_not_free un minor g /\
                     (forall (h: heap) (y: obj_addr). in_use un h y ==> in_use free_stw h y) /\
                     copies_in_use PI.mark_tal un)
           (ensures well_formed_heap_with un (gm minor g st roots))
@@ -301,18 +299,18 @@ let nursery_in (refs: obj_addr -> prop) (minor: minor_state) (g: heap) : prop =
 let nursery_not_unreached_w (refs: obj_addr -> prop)
     (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t) (sp: MP.scan_pos)
   : Lemma (requires mpre_mark_w minor g st roots /\ MP.marking_inv g refs sp /\ nursery_in refs minor g)
-          (ensures major_targets (MP.unreached g sp) minor g)
+          (ensures GenInv.minor_major_fields_not_free (MP.unreached g sp) minor g)
   = mpre_facts_w minor g st roots;
     let h (obj: U64.t) (j: nat)
       : Lemma (requires Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
                         is_pointer_field (minor_read_field minor obj j))
               (ensures in_use (MP.unreached g sp) g (resolve_object ((minor_read_field minor obj j) <: obj_addr) g) /\
                        infix_addr_wf g (objects zero_addr g) ((minor_read_field minor obj j) <: obj_addr))
-      = major_targets_elim free_stw minor g obj j;
+      = GenInv.minor_major_fields_not_free_elim free_stw minor g obj j;
         let v : obj_addr = minor_read_field minor obj j in
         assert (refs (resolve_object v g))
     in
-    major_targets_intro (MP.unreached g sp) minor g h
+    GenInv.minor_major_fields_not_free_intro (MP.unreached g sp) minor g h
 #pop-options
 
 /// **The heap after is well formed for `unreached g sp`.**
@@ -426,10 +424,8 @@ let rewritten_root_w (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64
       MM.header_kept_facts pm g' t;
       Mark.colors_exclusive t g'
     end else begin
-      // an old root, a major block
+      // an old root: it names the major block it resolves to
       assert (r == r');
-      resolve_non_infix (r <: obj_addr) g;
-      infix_addr_wf_non_infix g (objects zero_addr g) (r <: obj_addr);
       free_stw_ok ();
       m_target_w minor g st roots r
     end
@@ -606,7 +602,7 @@ let snapshot_sub (snapshot: obj_addr -> prop)
 #push-options "--z3rlimit 30"
 let m_account_w (snapshot: obj_addr -> prop) (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t)
   : Lemma (requires mpre_mark_w minor g st roots /\ MPC.within_snapshot snapshot g /\
-                    major_targets (MPC.outside_snapshot snapshot) minor g)
+                    GenInv.minor_major_fields_not_free (MPC.outside_snapshot snapshot) minor g)
           (ensures (let g' = gm minor g st roots in
                     MPC.within_snapshot (GMC.with_new_blocks snapshot g g') g'))
   = let g' = gm minor g st roots in
@@ -636,38 +632,37 @@ let m_account_w (snapshot: obj_addr -> prop) (minor: minor_state) (g: heap) (st:
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// Resolved nursery references (design doc §12)
+/// The marking invariant, from what is followed (design doc §12)
 /// ---------------------------------------------------------------------------
 
-/// What the nursery's fields hold in the major heap: a major pointer
-/// resolving to `w` (akhil's `nursery_refs` takes the pointer itself).
-let nursery_refs_r (minor: minor_state) (g: heap) (w: obj_addr) : prop =
-  exists (obj: U64.t) (j: nat).
-    Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
-    (let v = minor_read_field minor obj j in
-     if is_pointer_field v then resolve_object (v <: obj_addr) g == w else False)
+/// akhil's references name the block a nursery field's major pointer
+/// resolves to.
+let nursery_in_refs (extra: obj_addr -> prop) (minor: minor_state) (g: heap) (roots: seq U64.t)
+  : Lemma (nursery_in (fun w -> GMM.outside_refs_of minor g roots w \/ extra w) minor g)
+  = let h (obj: U64.t) (j: nat)
+      : Lemma (Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
+               is_pointer_field (minor_read_field minor obj j) ==>
+               GMM.outside_refs_of minor g roots (resolve_object ((minor_read_field minor obj j) <: obj_addr) g))
+      = if Seq.mem obj (minor_objects minor) && j < minor_scan_wosize minor obj &&
+           is_pointer_field (minor_read_field minor obj j) then begin
+          let v : obj_addr = minor_read_field minor obj j in
+          assert (GMM.nursery_refs minor g (resolve_object v g))
+        end
+    in
+    FStar.Classical.forall_intro_2 h
 
-/// The program's roots and the nursery's fields, resolved.
-let outside_refs_r (minor: minor_state) (g: heap) (roots: seq U64.t) (w: obj_addr) : prop =
-  GMM.root_refs g roots w \/ nursery_refs_r minor g w
-
-let nursery_in_r (extra: obj_addr -> prop) (minor: minor_state) (g: heap) (roots: seq U64.t)
-  : Lemma (nursery_in (fun w -> outside_refs_r minor g roots w \/ extra w) minor g)
-  = ()
-
-/// **The collection keeps the marking invariant**, with the nursery's
-/// references resolved: an infix pointer into a major closure refers to the
-/// closure.
+/// **The collection keeps the marking invariant**, from what is followed:
+/// akhil's statement (`m_keeps_marking_inv_with`) under `mpre_mark_w`.
 let m_keeps_marking_inv_r (extra: obj_addr -> prop)
     (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t) (sp: MP.scan_pos)
   : Lemma (requires mpre_mark_w minor g st roots /\
                     MCFH.roots_valid_for_minor_collection minor g roots /\
-                    MP.marking_inv g (fun w -> outside_refs_r minor g roots w \/ extra w) sp)
+                    MP.marking_inv g (fun w -> GMM.outside_refs_of minor g roots w \/ extra w) sp)
           (ensures (let res = mcollect minor g st roots in
                     MP.marking_inv res.rmajor
                       (fun w -> GMM.root_refs res.rmajor res.rroots w \/ extra w) sp))
-  = nursery_in_r extra minor g roots;
-    m_keeps_marking_inv_core (fun w -> outside_refs_r minor g roots w \/ extra w) extra minor g st roots sp
+  = nursery_in_refs extra minor g roots;
+    m_keeps_marking_inv_core (fun w -> GMM.outside_refs_of minor g roots w \/ extra w) extra minor g st roots sp
 
 /// ---------------------------------------------------------------------------
 /// From akhil's conditions
@@ -715,34 +710,7 @@ let m_wf_with (un: free_def) (minor: minor_state) (g: heap) (st: pstate) (roots:
                     copies_in_use PI.mark_tal un)
           (ensures well_formed_heap_with un (gm minor g st roots))
   = mark_weaken minor g st roots;
-    targets_of_not_free un minor g;
     m_wf_with_w un minor g st roots
-
-/// Under akhil's conditions a nursery field's major pointer is a block, so
-/// his references include what it resolves to.
-#push-options "--z3rlimit 20"
-let nursery_in_raw (extra: obj_addr -> prop) (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t)
-  : Lemma (requires mpre_mark minor g st)
-          (ensures nursery_in (fun w -> GMM.outside_refs_of minor g roots w \/ extra w) minor g)
-  = mpre_facts minor g st;
-    free_stw_ok ();
-    let h (obj: U64.t) (j: nat)
-      : Lemma (Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
-               is_pointer_field (minor_read_field minor obj j) ==>
-               GMM.outside_refs_of minor g roots (resolve_object ((minor_read_field minor obj j) <: obj_addr) g))
-      = if Seq.mem obj (minor_objects minor) && j < minor_scan_wosize minor obj &&
-           is_pointer_field (minor_read_field minor obj j) then begin
-          GenInv.minor_major_fields_not_free_elim free_stw minor g obj j;
-          let v : obj_addr = minor_read_field minor obj j in
-          free_def_ok_elim free_stw;
-          wf_with_parts ();
-          assert (~(is_infix v g));
-          resolve_non_infix v g;
-          assert (GMM.nursery_refs minor v)
-        end
-    in
-    FStar.Classical.forall_intro_2 h
-#pop-options
 
 let m_keeps_marking_inv_with (extra: obj_addr -> prop)
     (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t) (sp: MP.scan_pos)
@@ -753,8 +721,7 @@ let m_keeps_marking_inv_with (extra: obj_addr -> prop)
                     MP.marking_inv res.rmajor
                       (fun w -> GMM.root_refs res.rmajor res.rroots w \/ extra w) sp))
   = mark_weaken minor g st roots;
-    nursery_in_raw extra minor g st roots;
-    m_keeps_marking_inv_core (fun w -> GMM.outside_refs_of minor g roots w \/ extra w) extra minor g st roots sp
+    m_keeps_marking_inv_r extra minor g st roots sp
 
 let m_account (snapshot: obj_addr -> prop) (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t)
   : Lemma (requires mpre_mark minor g st /\ MPC.within_snapshot snapshot g /\
@@ -763,5 +730,4 @@ let m_account (snapshot: obj_addr -> prop) (minor: minor_state) (g: heap) (st: p
                     MPC.within_snapshot (GMC.with_new_blocks snapshot g g') g'))
   = mark_weaken minor g st roots;
     MPC.outside_snapshot_ok snapshot;
-    targets_of_not_free (MPC.outside_snapshot snapshot) minor g;
     m_account_w snapshot minor g st roots

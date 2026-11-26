@@ -30,6 +30,7 @@ module HeapGraph = GC.Spec.HeapGraph
 module Graph = GC.Spec.Graph
 module FreeListShape = GC.Gen.FreeListShape
 module FLA = GC.Spec.FreeList.Ascending
+module SPI = GC.Spec.SweepPhase.Intrinsic
 
 /// The free list is exact: it holds exactly the blue blocks that can carry a
 /// link (`GC.Spec.FreeList.fl_exact`).  Abstract here so that the many proofs
@@ -87,9 +88,19 @@ val free_list_exact_iff (major: heap) (fp: U64.t)
 val major_heap_shape (major: heap) (fp: U64.t) : prop
 
 /// Cross-generation safety: any field of an allocated minor object that already
-/// looks like a major-heap pointer must target a live non-blue major object.
-/// This is what lets promotion keep `pointers_lead_to_non_free` (no pointer to a free
-/// block).
+/// looks like a major-heap pointer must *resolve* to a live non-blue major
+/// object, and be well formed if it is interior (`infix_addr_wf`).  This is
+/// what lets promotion keep `pointers_lead_to_non_free` and
+/// `interior_pointers_valid` (no pointer to a free block, every interior
+/// pointer inside a live closure): a promoted copy's fields are exactly these
+/// words.  It is the same condition the pointer clauses of `well_formed_heap`
+/// put on a field of a live major block.
+///
+/// A nursery field may hold an interior pointer into a major closure: in real
+/// OCaml a record or closure environment is assigned `g` from
+/// `let rec f .. and g ..` after `g`'s closure was promoted.  For an ordinary
+/// pointer `infix_addr_wf` is vacuous and `resolve_object` the identity, so
+/// this is the plain "non-blue block" requirement there.
 ///
 /// Quantified over the *scan window* `GC.Gen.MinorHeap.minor_scan_wosize`, not
 /// the whole body: a tag >= No_scan_tag nursery block holds raw data whose
@@ -262,8 +273,10 @@ val major_shape_with_elim (ph: gc_phase) (free: free_def) (major: heap) (fp: U64
                    GC.Spec.FreeList.fp_in_heap fp major)
 
 /// Cross-generation condition given what counts as free: a nursery field (in the scan window)
-/// that looks like a major pointer targets a non-free block.  Nursery pointers lie below `zero_addr`, so they
-/// never look like one.  At `free_stw` this is
+/// that looks like a major pointer is *storable* in a non-free major block
+/// (`GC.Spec.SweepPhase.Intrinsic.storable`): it resolves to a non-free block,
+/// and if it is interior it is well formed.  Nursery pointers lie below
+/// `zero_addr`, so they never look like one.  At `free_stw` this is
 /// `minor_major_fields_no_blue minor major`.
 [@@"opaque_to_smt"]
 val minor_major_fields_not_free (free: free_def) (minor: minor_state) (major: heap) : prop
@@ -273,7 +286,8 @@ val minor_major_fields_not_free_intro (free: free_def) (minor: minor_state) (maj
        Lemma (requires Seq.mem obj (minor_objects minor) /\
                        j < minor_scan_wosize minor obj /\
                        is_pointer_field (minor_read_field minor obj j))
-             (ensures in_use free major ((minor_read_field minor obj j) <: obj_addr)))
+             (ensures in_use free major (resolve_object ((minor_read_field minor obj j) <: obj_addr) major) /\
+                      infix_addr_wf major (objects zero_addr major) ((minor_read_field minor obj j) <: obj_addr)))
   : Lemma (minor_major_fields_not_free free minor major)
 
 val minor_major_fields_not_free_elim (free: free_def) (minor: minor_state) (major: heap)
@@ -282,7 +296,71 @@ val minor_major_fields_not_free_elim (free: free_def) (minor: minor_state) (majo
                     Seq.mem obj (minor_objects minor) /\
                     j < minor_scan_wosize minor obj /\
                     is_pointer_field (minor_read_field minor obj j))
+          (ensures in_use free major (resolve_object ((minor_read_field minor obj j) <: obj_addr) major) /\
+                   infix_addr_wf major (objects zero_addr major) ((minor_read_field minor obj j) <: obj_addr))
+
+/// The clause as `storable`, field by field.
+val minor_major_fields_not_free_storable (free: free_def) (minor: minor_state) (major: heap)
+  (obj: U64.t) (j: nat)
+  : Lemma (requires minor_major_fields_not_free free minor major /\
+                    Seq.mem obj (minor_objects minor) /\
+                    j < minor_scan_wosize minor obj)
+          (ensures SPI.storable free major (minor_read_field minor obj j))
+
+/// For an ordinary (not interior) field the clause is the plain one: the
+/// field is itself a non-free block.
+val minor_major_fields_not_free_ordinary (free: free_def) (minor: minor_state) (major: heap)
+  (obj: U64.t) (j: nat)
+  : Lemma (requires minor_major_fields_not_free free minor major /\
+                    Seq.mem obj (minor_objects minor) /\
+                    j < minor_scan_wosize minor obj /\
+                    is_pointer_field (minor_read_field minor obj j) /\
+                    ~(is_infix ((minor_read_field minor obj j) <: obj_addr) major))
           (ensures in_use free major ((minor_read_field minor obj j) <: obj_addr))
+
+/// The clause from the plain one, on a heap with no interior block on the
+/// walk: a non-free block is then not interior, so it resolves to itself.
+val minor_major_fields_not_free_intro_ordinary (free: free_def) (minor: minor_state) (major: heap)
+  (h: (obj: U64.t) -> (j: nat) ->
+       Lemma (requires Seq.mem obj (minor_objects minor) /\
+                       j < minor_scan_wosize minor obj /\
+                       is_pointer_field (minor_read_field minor obj j))
+             (ensures in_use free major ((minor_read_field minor obj j) <: obj_addr)))
+  : Lemma (requires no_infix_block major)
+          (ensures minor_major_fields_not_free free minor major)
+
+/// The clause survives a change of heap and of what counts as free that keeps
+/// every non-free block non-free, with its header, and the blocks of the
+/// non-free closures (`SPI.storable_transfer`).
+val minor_major_fields_not_free_transfer (free free': free_def) (minor: minor_state) (g g': heap)
+  : Lemma (requires minor_major_fields_not_free free minor g /\
+                    no_infix_block g /\ no_infix_block g' /\ free_def_ok free' /\
+                    SPI.heads_kept free g g' /\
+                    (forall (y: obj_addr). in_use free g y ==> in_use free' g' y))
+          (ensures minor_major_fields_not_free free' minor g')
+
+/// ... and across a change that may recolour: every non-free block stays
+/// non-free with the same size, tag and fields (`SPI.storable_transfer_blocks`).
+val minor_major_fields_not_free_transfer_blocks (free free': free_def) (minor: minor_state) (g g': heap)
+  : Lemma (requires minor_major_fields_not_free free minor g /\
+                    no_infix_block g /\ no_infix_block g' /\
+                    (forall (y: obj_addr). in_use free g y ==>
+                       in_use free' g' y /\ SPI.same_block g g' (hd_address y)))
+          (ensures minor_major_fields_not_free free' minor g')
+
+/// ... and across recolouring one object, which changes no resolution.
+val minor_major_fields_not_free_recolour (free: free_def) (minor: minor_state) (x: obj_addr) (g: heap)
+  (c: color)
+  : Lemma (requires minor_major_fields_not_free free minor g /\
+                    objects zero_addr (set_object_color x g c) == objects zero_addr g /\
+                    (forall (y: obj_addr). in_use free g y ==> in_use free (set_object_color x g c) y))
+          (ensures minor_major_fields_not_free free minor (set_object_color x g c))
+
+/// ... and a change of what counts as free alone, on the same heap.
+val minor_major_fields_not_free_weaken (free free': free_def) (minor: minor_state) (g: heap)
+  : Lemma (requires minor_major_fields_not_free free minor g /\
+                    (forall (y: obj_addr). in_use free g y ==> in_use free' g y))
+          (ensures minor_major_fields_not_free free' minor g)
 
 val minor_major_fields_not_free_stw (minor: minor_state) (major: heap)
   : Lemma (minor_major_fields_not_free free_stw minor major <==>

@@ -236,7 +236,7 @@ let ctx_start (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: 
     young_ok_heq w.M.yng wc.M.yng;
     LV.roots_follow_of wc ms;
     P.contract_wf (ptal ph st) (gl h0 st) st.ps;
-    FW.major_targets_intro (ptal ph st).P.free ms (gl h0 st)
+    GenInv.minor_major_fields_not_free_intro (ptal ph st).P.free ms (gl h0 st)
       (fun obj j -> mt_one ph st h0 w ms obj j)
 #pop-options
 

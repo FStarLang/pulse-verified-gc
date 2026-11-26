@@ -20,8 +20,9 @@
 /// and the copy of the fields.
 ///
 /// Design doc §12: the loop reads only what it follows.  `cpre_w`/`ctx_w`
-/// replace akhil's `minor_infix_wf` and `minor_major_fields_not_free` with
-/// `Promote.Follow`'s `fields_follow`, `roots_follow` and `major_targets`;
+/// replace akhil's `minor_infix_wf` with `Promote.Follow`'s `fields_follow`
+/// and `roots_follow`, and keep his `minor_major_fields_not_free` (stated,
+/// since PR #58, of the block a field resolves to);
 /// the loop keeps its own `finv` (the infix addresses it forwarded were
 /// followed safely; the queue holds nursery objects).  `cpre`, `ctx` and
 /// their lemmas are kept, from `cpre_weaken`/`ctx_weaken`.
@@ -65,15 +66,14 @@ let cpre (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) : prop 
 /// safely, and its major pointers resolving to blocks in use.
 let cpre_w (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t) : prop =
   contract a /\ a.inv g0 st0 /\ minor_wf minor /\ fields_follow minor /\ roots_follow minor roots /\
-  major_targets a.free minor g0
+  GenInv.minor_major_fields_not_free a.free minor g0
 
 /// akhil's conditions give these.
 let cpre_weaken (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) (st0: s) (roots: seq U64.t)
   : Lemma (requires cpre a minor g0 st0) (ensures cpre_w a minor g0 st0 roots)
   = contract_wf a g0 st0;
     fields_of_infix_wf minor;
-    roots_of_infix_wf minor roots;
-    targets_of_not_free a.free minor g0
+    roots_of_infix_wf minor roots
 
 /// The block of `y` in `g'` is its block in `g`: header and fields.
 let kept (g g': heap) (y: obj_addr) : prop =
@@ -309,7 +309,7 @@ let away_of_apart (x t w: nat) (wz wt: nat)
 let copied_field_ok (#s: Type0) (a: tal s) (minor: minor_state) (g0 g g1 g2: heap) (addr: U64.t)
                     (x: obj_addr) (wz: pos) (j: nat)
   : Lemma (requires free_def_ok a.free /\ well_formed_heap_with a.free g0 /\
-                    major_targets a.free minor g0 /\
+                    GenInv.minor_major_fields_not_free a.free minor g0 /\
                     Seq.mem addr (minor_objects minor) /\ j < minor_scan_wosize minor addr /\
                     olds a g0 g /\ step_rel a g g2 x /\ Seq.mem x (objects zero_addr g1) /\
                     (forall (y: obj_addr). in_use a.free g1 y ==> Seq.mem y (objects zero_addr g1)) /\
@@ -323,7 +323,7 @@ let copied_field_ok (#s: Type0) (a: tal s) (minor: minor_state) (g0 g g1 g2: hea
   = let v = minor_read_field minor addr j in
     if is_pointer v then begin
       let w : obj_addr = v in
-      major_targets_elim a.free minor g0 addr j;
+      GenInv.minor_major_fields_not_free_elim a.free minor g0 addr j;
       free_def_ok_elim a.free;
       olds_step a g0 g g2 x;
       old_target_wf a a.free g0 g2 w;
@@ -369,7 +369,7 @@ let kept_one (#s: Type0) (a: tal s) (minor: minor_state) (g g1: heap) (addr: U64
 #push-options "--z3rlimit 40"
 let written_away (#s: Type0) (a: tal s) (minor: minor_state) (g0 g g1: heap) (addr: U64.t) (x: obj_addr) (wz: pos)
   : Lemma (requires free_def_ok a.free /\ well_formed_heap_with a.free g0 /\
-                    major_targets a.free minor g0 /\
+                    GenInv.minor_major_fields_not_free a.free minor g0 /\
                     Seq.mem addr (minor_objects minor) /\ wz == minor_wosize minor addr /\
                     olds a g0 g /\ step_rel a g (copy_fields minor g1 addr x 0 wz) x /\
                     Seq.mem x (objects zero_addr g1) /\ U64.v x + wz * 8 <= heap_size /\
@@ -408,7 +408,7 @@ let written_away (#s: Type0) (a: tal s) (minor: minor_state) (g0 g g1: heap) (ad
 /// the copy of `addr`, and keeps every other block in use.
 #push-options "--z3rlimit 40"
 let promote_step_w (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (st: s) (addr: U64.t)
-  : Lemma (requires contract a /\ minor_wf minor /\ major_targets a.free minor g0 /\
+  : Lemma (requires contract a /\ minor_wf minor /\ GenInv.minor_major_fields_not_free a.free minor g0 /\
                     well_formed_heap_with a.free g0 /\ a.inv g st /\ olds a g0 g /\
                     Seq.mem addr (minor_objects minor) /\ minor_wosize minor addr > 0)
           (ensures (let (g2, s2, o) = promote_object a minor g addr st (minor_wosize minor addr) in
@@ -460,7 +460,6 @@ let promote_step (#s: Type0) (a: tal s) (minor: minor_state) (g0 g: heap) (st: s
                        U64.v o >= 8 /\ U64.v o < heap_size /\ U64.v o % 8 == 0 /\
                        a.inv g2 s2 /\ step_rel a g g2 (o <: obj_addr) /\ copy_of a minor g0 g2 addr o)))
   = contract_wf a g st;
-    targets_of_not_free a.free minor g0;
     promote_step_w a minor g0 g st addr
 
 /// ---------------------------------------------------------------------------
@@ -474,13 +473,12 @@ let ctx (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) : prop =
 
 /// ... reading only what it follows (design doc §12).
 let ctx_w (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap) : prop =
-  contract a /\ minor_wf minor /\ fields_follow minor /\ major_targets a.free minor g0 /\
+  contract a /\ minor_wf minor /\ fields_follow minor /\ GenInv.minor_major_fields_not_free a.free minor g0 /\
   well_formed_heap_with a.free g0
 
 let ctx_weaken (#s: Type0) (a: tal s) (minor: minor_state) (g0: heap)
   : Lemma (requires ctx a minor g0) (ensures ctx_w a minor g0)
-  = fields_of_infix_wf minor;
-    targets_of_not_free a.free minor g0
+  = fields_of_infix_wf minor
 
 /// The loop's own invariant: the infix addresses it forwarded were followed
 /// safely, and its queue holds nursery objects.

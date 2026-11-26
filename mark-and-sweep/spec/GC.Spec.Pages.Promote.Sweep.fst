@@ -52,7 +52,7 @@ let spre (minor: minor_state) (g: heap) (st: pstate) : prop =
 /// ... read only where it follows a pointer (design doc §12).
 let spre_w (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t) : prop =
   MS.pages_ok_sw g st /\ minor_wf minor /\ fields_follow minor /\ roots_follow minor roots /\
-  major_targets (MS.free_sw st.pm) minor g
+  GenInv.minor_major_fields_not_free (MS.free_sw st.pm) minor g
 
 /// The blocks a change made: in use after, not before.
 let made (pm: page_map) (g g': heap) (x: obj_addr) : prop =
@@ -113,6 +113,5 @@ let s_facts (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t)
     roots_of_infix_wf minor roots;
     PI.sw_contract st.pm;
     contract_wf (PI.sw_tal st.pm) g st;
-    targets_of_not_free (MS.free_sw st.pm) minor g;
     s_facts_w minor g st roots
 #pop-options

@@ -65,8 +65,8 @@ let mark_start_shape minor g fp rs =
   GenInv.collection_shape_with_intro Ph.Marking free_stw minor g' fp;
   // the marking invariant: nothing black, and the empty nursery holds nothing
   MP.no_black_tri_color g';
-  FStar.Classical.forall_intro (GMM.nursery_refs_reset minor);
-  MP.marking_inv_start g' (GMM.nursery_refs minor);
+  FStar.Classical.forall_intro (GMM.nursery_refs_reset minor g');
+  MP.marking_inv_start g' (GMM.nursery_refs minor g');
   GI.phase_shape_marking minor g' fp MP.scan_none
 #pop-options
 

@@ -46,7 +46,7 @@ let combined_reachable_edge_forwarded_normal (ph: gc_phase)
   (u w: CG.combined_vertex)
   =
     let cg = CG.build_combined_graph minor major free in
-    let combined_roots = CG.classify_roots minor roots in
+    let combined_roots = CG.classify_roots minor major roots in
     let prom = cheney_promote ph minor major fp roots in
     GenInv.collection_shape_with_elim ph free minor major fp;
     GenInv.major_shape_with_elim ph free major fp;
@@ -128,7 +128,7 @@ private let fwd_disjoint_reachable_major_at (ph: gc_phase)
       GenInv.collection_shape_with ph free minor major fp /\
       RBridge.roots_not_free free roots major /\
       (let cg = CG.build_combined_graph minor major free in
-       let combined_roots = CG.classify_roots minor roots in
+       let combined_roots = CG.classify_roots minor major roots in
        let prom = cheney_promote ph minor major fp roots in
        CG.combined_reachable cg combined_roots (CG.MinorV x) /\
        CG.combined_reachable cg combined_roots (CG.MajorV y) /\
@@ -141,7 +141,7 @@ private let fwd_disjoint_reachable_major_at (ph: gc_phase)
   =
     let prom = cheney_promote ph minor major fp roots in
     let cg = CG.build_combined_graph minor major free in
-    let combined_roots = CG.classify_roots minor roots in
+    let combined_roots = CG.classify_roots minor major roots in
     GenInv.collection_shape_with_elim ph free minor major fp;
     GenInv.major_shape_with_elim ph free major fp;
     GenInv.minor_heap_shape_elim minor;
@@ -164,7 +164,7 @@ let fwd_disjoint_reachable_major_intro (ph: gc_phase)
     let aux (x y: U64.t) : Lemma
       (requires
         (let cg = CG.build_combined_graph minor major free in
-         let combined_roots = CG.classify_roots minor roots in
+         let combined_roots = CG.classify_roots minor major roots in
          let prom = cheney_promote ph minor major fp roots in
          CG.combined_reachable cg combined_roots (CG.MinorV x) /\
          CG.combined_reachable cg combined_roots (CG.MajorV y) /\
@@ -209,7 +209,7 @@ let combined_reachable_normal_injective (ph: gc_phase)
     let aux (u w: CG.combined_vertex) : Lemma
       (requires
         (let cg = CG.build_combined_graph minor major free in
-         let combined_roots = CG.classify_roots minor roots in
+         let combined_roots = CG.classify_roots minor major roots in
          CG.combined_reachable cg combined_roots u /\
          CG.combined_reachable cg combined_roots w /\
          (match u with
@@ -228,7 +228,7 @@ let combined_reachable_normal_injective (ph: gc_phase)
       (ensures u == w)
     =
       let cg = CG.build_combined_graph minor major free in
-      let combined_roots = CG.classify_roots minor roots in
+      let combined_roots = CG.classify_roots minor major roots in
       match u, w with
       | CG.MajorV x, CG.MajorV y -> ()
       | CG.MinorV x, CG.MinorV y ->

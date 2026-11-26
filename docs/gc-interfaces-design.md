@@ -1828,7 +1828,9 @@ allocator's instance of the promotion.
   closure (OCaml's mutually recursive closures do).  `young_sound` now also
   requires such pointers to be block starts.  Like G38(b), this is a
   restriction of the promotion, stated in the model.  **Decided
-  (2026-11-22): removed, §12.**
+  (2026-11-22): removed, §12.**  PR #58 (akhil) then removed it upstream:
+  `minor_major_fields_not_free` is stated of the block a field resolves
+  to, and the promotion takes it (this branch's `major_targets` is gone).
 
 ### 11.3 Not done
 
@@ -1894,13 +1896,13 @@ nursery's references resolved; and witness both new cases.
 - `follow_ok ms a`: if `a` reads as infix, `infix_at ms a`.
 - `fields_follow ms`: every scanned field value of a nursery object is
   `follow_ok`; `roots_follow ms roots`: every root is.
-- `major_targets un ms g`: every major pointer in a scanned nursery field
-  resolves to a block in use for `un`, with a well-formed infix address.
+- Major pointers in nursery fields: akhil's `minor_major_fields_not_free
+  un ms g`, which PR #58 states of the block each resolves to (in use for
+  `un`, with a well-formed infix address).  Before the merge of #58 this
+  branch had its own `major_targets` for that; it is removed, and the
+  promotion takes akhil's predicate.
 - Bridges: `minor_infix_wf` gives `follow_ok` everywhere
-  (`fields_of_infix_wf`, `roots_of_infix_wf`, `entries_of_infix_wf`);
-  `minor_major_fields_not_free un` with well-formedness for `un` gives
-  `major_targets un` (`targets_of_not_free`: a block in use is not infix,
-  so resolves to itself).
+  (`fields_of_infix_wf`, `roots_of_infix_wf`, `entries_of_infix_wf`).
 
 ### 12.3 The promotion
 
@@ -1920,11 +1922,10 @@ nursery's references resolved; and witness both new cases.
   lemma is one core, `m_keeps_marking_inv_core refs extra`, for any
   outside references `refs` holding the roots, `extra`, and what the
   nursery's major pointers resolve to (`nursery_in`).  Its instances:
-  `m_keeps_marking_inv_r`, with `outside_refs_r` (the nursery's references
-  resolved: an infix pointer into a major closure refers to the closure),
-  and akhil's `m_keeps_marking_inv_with`, with his `outside_refs_of`
-  (`nursery_in_raw`: under his condition a nursery major pointer is a
-  block, so resolves to itself).
+  `m_keeps_marking_inv_r`, akhil's statement with his `outside_refs_of`
+  (which since PR #58 names the block a nursery pointer resolves to;
+  `nursery_in_refs`) under `mpre_mark_w`, and his `m_keeps_marking_inv_with`
+  from it.
 - `Idle`, `Sweep`: `ipre_w`/`i_facts_w`, `spre_w`/`s_facts_w`.
 - Every earlier statement is kept with its signature, proved from the weak
   one through the bridges: `cpre`, `ctx`, `promote_step`,
@@ -1972,9 +1973,10 @@ nursery's references resolved; and witness both new cases.
   field 1 is an infix header of offset 2; a nursery with one object `A`
   (root) whose fields are the infix pointer `C + 16` and the word 249.
   `minor_wf`, `fields_follow`, `roots_follow` and
-  `major_targets free_stw` hold; `minor_infix_wf` fails (at `A + 16`, which
-  reads as infix with offset 0) and `minor_major_fields_not_free free_stw`
-  fails (`C + 16` is infix, not in use).  The allocator's invariant is not
+  `minor_major_fields_not_free free_stw` hold; `minor_infix_wf` fails (at
+  `A + 16`, which reads as infix with offset 0).  Before PR #58 (akhil)
+  `minor_major_fields_not_free` failed too (`C + 16` is infix, not in
+  use); #58 states it of the block a field resolves to.  The allocator's invariant is not
   part of it: the heap is built directly, not by the page allocator.
 - `GC.Spec.Top.FollowWitness.accepted` (model): a world whose live young
   block holds `Major 2` (an infix pointer into the closure at 0) and

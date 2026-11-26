@@ -193,7 +193,7 @@ let start_satb (minor: minor_state) (g0: heap) (fp0: U64.t) (rs: seq U64.t)
 /// The collector's state while marking, taken apart.
 let marking_parts (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos)
   : Lemma (requires GI.phase_shape minor g fp Ph.Marking sp)
-          (ensures MP.marking_inv g (GMM.nursery_refs minor) sp /\ FLA.fl_ascending g fp /\
+          (ensures MP.marking_inv g (GMM.nursery_refs minor g) sp /\ FLA.fl_ascending g fp /\
                    AP.alloc_ok g fp /\ heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0)
   = GI.phase_shape_marking minor g fp sp;
     GenInv.collection_shape_with_elim Ph.Marking free_stw minor g fp;
@@ -310,7 +310,7 @@ let write_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
                     MPC.cycle_write (snapshot g0 rs since) g x a v)
           (ensures mark_run_inv g0 rs since (GB.modify_heap Ph.Marking g a v) sp)
   = let r = GMC.reachable_at_start g0 rs in
-    let o (w: obj_addr) : prop = GMM.nursery_refs minor w \/ r w in
+    let o (w: obj_addr) : prop = GMM.nursery_refs minor g w \/ r w in
     GI.phase_shape_marking minor g fp sp;
     GI.phase_free_marking ();
     assert (MP.marking_inv g o sp);
@@ -366,7 +366,7 @@ let alloc_inv (g0: heap) (rs: seq U64.t) (since: obj_addr -> prop)
     let s' = snapshot g0 rs (SPC.with_new since obj) in
     marking_parts minor g fp sp;
     assert (MP.marking_inv g r sp);
-    MPC.account_alloc s (GMM.nursery_refs minor) sp g fp wz tag;
+    MPC.account_alloc s (GMM.nursery_refs minor g) sp g fp wz tag;
     MPA.marking_alloc g r sp fp wz tag;
     init_inv w s1 r sp;
     let keep (y: obj_addr)

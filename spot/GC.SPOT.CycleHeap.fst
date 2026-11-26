@@ -424,7 +424,9 @@ let minor_pre (r: unit{MPH.room}) (farr sl: seq U64.t)
         if q = (obj_a r <: U64.t) then RBridge.major_object_not_minor_pointer g (obj_a r)
         else RBridge.major_object_not_minor_pointer g (obj_c r)
     in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires rv)
+    FStar.Classical.forall_intro (FStar.Classical.move_requires rv);
+    // every root is an ordinary pointer, so the resolved form follows
+    GC.Gen.MinorCollectForwarding.Helpers.roots_valid_of_ordinary minor0 g (fp0 r) (roots0 r)
 #pop-options
 
 /// ---------------------------------------------------------------------------

@@ -10,12 +10,11 @@
 ///     word 249) breaks it, though the collection never reads such a word as
 ///     a header: it reads the word below an address only when it follows a
 ///     pointer to that address.
-///   * `minor_major_fields_not_free`: every major pointer in a nursery field
-///     is itself a block in use.  An infix pointer into a major closure (a
-///     young record holding one of a `let rec`'s functions) breaks it,
-///     though the collection only copies such a pointer, and a copy needs
-///     only what the heap's well-formedness asks of a field: the block it
-///     resolves to is in use, and its infix address is well formed.
+///   * `minor_major_fields_not_free`: before PR #58, every major pointer in
+///     a nursery field is itself a block in use, which an infix pointer into
+///     a major closure (a young record holding one of a `let rec`'s
+///     functions) breaks.  PR #58 states it of the block the pointer
+///     resolves to, with a well-formed infix address: what a copy needs.
 ///
 /// This module states the weaker conditions, at what is followed:
 ///
@@ -26,10 +25,10 @@
 ///   * `entries_follow`: every infix address the forwarding map holds is
 ///     `follow_ok` (the loop's own invariant, kept because only followed
 ///     addresses are forwarded);
-///   * `major_targets`: every major pointer in a nursery field resolves to
-///     a block in use, with a well-formed infix address;
 ///
-/// and that akhil's conditions imply them.
+/// and that akhil's `minor_infix_wf` implies them.  For the second, PR #58
+/// states akhil's `minor_major_fields_not_free` of the block a field
+/// resolves to, which is all a copy needs; the promotion takes it as it is.
 
 module GC.Spec.Pages.Promote.Follow
 
@@ -122,42 +121,6 @@ let roots_follow (minor: minor_state) (roots: seq U64.t) : prop =
 let entries_follow (minor: minor_state) (fwd: GC.Gen.Promote.forwarding_map) : prop =
   forall (m: U64.t). fwd m <> 0UL /\ is_infix_in_minor minor m ==> infix_at minor m
 
-/// Every major pointer a nursery object's scanned fields hold resolves to a
-/// block in use for `un`, through a well-formed infix address.
-[@@"opaque_to_smt"]
-let major_targets (un: free_def) (minor: minor_state) (g: heap) : prop =
-  forall (obj: U64.t) (j: nat).
-    Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
-    is_pointer_field (minor_read_field minor obj j) ==>
-    in_use un g (resolve_object ((minor_read_field minor obj j) <: obj_addr) g) /\
-    infix_addr_wf g (objects zero_addr g) ((minor_read_field minor obj j) <: obj_addr)
-
-let major_targets_elim (un: free_def) (minor: minor_state) (g: heap) (obj: U64.t) (j: nat)
-  : Lemma (requires major_targets un minor g /\ Seq.mem obj (minor_objects minor) /\
-                    j < minor_scan_wosize minor obj /\ is_pointer_field (minor_read_field minor obj j))
-          (ensures in_use un g (resolve_object ((minor_read_field minor obj j) <: obj_addr) g) /\
-                   infix_addr_wf g (objects zero_addr g) ((minor_read_field minor obj j) <: obj_addr))
-  = reveal_opaque (`%major_targets) (major_targets un minor g)
-
-let major_targets_intro (un: free_def) (minor: minor_state) (g: heap)
-  (h: (obj: U64.t) -> (j: nat) ->
-       Lemma (requires Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
-                       is_pointer_field (minor_read_field minor obj j))
-             (ensures in_use un g (resolve_object ((minor_read_field minor obj j) <: obj_addr) g) /\
-                      infix_addr_wf g (objects zero_addr g) ((minor_read_field minor obj j) <: obj_addr)))
-  : Lemma (major_targets un minor g)
-  = reveal_opaque (`%major_targets) (major_targets un minor g);
-    let h' (obj: U64.t) (j: nat)
-      : Lemma (Seq.mem obj (minor_objects minor) /\ j < minor_scan_wosize minor obj /\
-               is_pointer_field (minor_read_field minor obj j) ==>
-               in_use un g (resolve_object ((minor_read_field minor obj j) <: obj_addr) g) /\
-               infix_addr_wf g (objects zero_addr g) ((minor_read_field minor obj j) <: obj_addr))
-      = if Seq.mem obj (minor_objects minor) && j < minor_scan_wosize minor obj &&
-           is_pointer_field (minor_read_field minor obj j)
-        then h obj j
-    in
-    FStar.Classical.forall_intro_2 h'
-
 /// ---------------------------------------------------------------------------
 /// akhil's conditions imply these
 /// ---------------------------------------------------------------------------
@@ -178,24 +141,6 @@ let entries_of_infix_wf (minor: minor_state) (fwd: GC.Gen.Promote.forwarding_map
   : Lemma (requires minor_infix_wf minor) (ensures entries_follow minor fwd)
   = FStar.Classical.forall_intro (FStar.Classical.move_requires (follow_of_infix_wf minor))
 
-/// A block in use is not infix, so it resolves to itself.
-#push-options "--z3rlimit 30"
-let target_of_in_use (un: free_def) (g: heap) (v: obj_addr)
-  : Lemma (requires free_def_ok un /\ well_formed_heap_with un g /\ in_use un g v)
-          (ensures in_use un g (resolve_object v g) /\ infix_addr_wf g (objects zero_addr g) v)
-  = wf_with_parts ();
-    free_def_ok_elim un;
-    assert (~(is_infix v g));
-    resolve_non_infix v g;
-    infix_addr_wf_non_infix g (objects zero_addr g) v
-#pop-options
-
-let targets_of_not_free (un: free_def) (minor: minor_state) (g: heap)
-  : Lemma (requires free_def_ok un /\ well_formed_heap_with un g /\ GenInv.minor_major_fields_not_free un minor g)
-          (ensures major_targets un minor g)
-  = major_targets_intro un minor g (fun obj j ->
-      GenInv.minor_major_fields_not_free_elim un minor g obj j;
-      target_of_in_use un g ((minor_read_field minor obj j) <: obj_addr))
 
 /// ---------------------------------------------------------------------------
 /// Where a pointer lands

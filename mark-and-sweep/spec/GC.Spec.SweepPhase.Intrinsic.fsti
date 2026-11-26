@@ -460,12 +460,24 @@ let heads_kept (free: free_def) (g g': heap) : prop =
 
 /// **A storable value stays storable** across a change that keeps every block
 /// non-free under `free` non-free under `free'`, with its header, and the
-/// blocks of the non-free closures.
+/// blocks of the non-free closures.  It names the same block afterwards.
 val storable_transfer (g g': heap) (free free': free_def) (w: U64.t)
   : Lemma (requires storable free g w /\ no_infix_block g /\ no_infix_block g' /\ free_def_ok free' /\
                     heads_kept free g g' /\
                     (forall (y: obj_addr). in_use free g y ==> in_use free' g' y))
-          (ensures storable free' g' w)
+          (ensures storable free' g' w /\
+                   (is_pointer w ==> resolve_object (w <: obj_addr) g' == resolve_object (w <: obj_addr) g))
+
+/// **... and across a change that may recolour**: it is enough that every
+/// non-free block stays non-free with the same size, tag and fields
+/// (`same_block`); its header word may change colour.  This is the form a
+/// sweep slice and a mark move supply.
+val storable_transfer_blocks (g g': heap) (free free': free_def) (w: U64.t)
+  : Lemma (requires storable free g w /\ no_infix_block g /\ no_infix_block g' /\
+                    (forall (y: obj_addr). in_use free g y ==>
+                       in_use free' g' y /\ same_block g g' (hd_address y)))
+          (ensures storable free' g' w /\
+                   (is_pointer w ==> resolve_object (w <: obj_addr) g' == resolve_object (w <: obj_addr) g))
 
 /// ---------------------------------------------------------------------------
 /// Start

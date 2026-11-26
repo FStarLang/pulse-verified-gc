@@ -30,15 +30,7 @@ let minor_fields_ok_of free minor obj g =
   let one (j: nat)
     : Lemma (requires j < minor_scan_wosize minor obj)
             (ensures storable free g (minor_read_field minor obj j))
-    = let w = minor_read_field minor obj j in
-      if is_pointer w then begin
-        GC.Gen.HeapInvariant.minor_major_fields_not_free_elim free minor g obj j;
-        let t : obj_addr = w in
-        in_use_not_blue free g t;
-        assert (~(is_infix t g));
-        resolve_non_infix t g;
-        infix_addr_wf_non_infix g (objects zero_addr g) t
-      end
+    = GC.Gen.HeapInvariant.minor_major_fields_not_free_storable free minor g obj j
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires one)
 #pop-options

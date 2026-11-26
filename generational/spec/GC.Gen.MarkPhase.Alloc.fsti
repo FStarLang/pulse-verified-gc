@@ -63,10 +63,11 @@ module MP = GC.Spec.MarkPhase
 /// yet initialised.
 let fresh_shape (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos) (obj: obj_addr) : prop =
   GenInv.minor_heap_shape minor /\
-  GenInv.minor_major_fields_not_free free_stw minor g /\
+  // the nursery names no block but the non-free ones other than `obj`
+  GenInv.minor_major_fields_not_free (MPA.free_or_new obj) minor g /\
   heap_objects_dense g /\ Seq.length (objects zero_addr g) > 0 /\
   FLA.fl_ascending g fp /\
-  MPA.marking_fresh g (GMM.nursery_refs minor) sp obj
+  MPA.marking_fresh g (GMM.nursery_refs minor g) sp obj
 
 /// **Allocation while marking**: nothing changes if nothing fits; otherwise
 /// the new block has the requested size and tag and is fresh.
@@ -92,7 +93,7 @@ val fresh_shape_write (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_po
 /// point at, the collector's state at `Marking`.
 val fresh_shape_close (minor: minor_state) (g: heap) (fp: U64.t) (sp: MP.scan_pos) (obj: obj_addr)
   : Lemma (requires fresh_shape minor g fp sp obj /\ SPM.fields_storable free_stw g obj /\
-                    MPA.fields_ok g (GMM.nursery_refs minor) sp obj)
+                    MPA.fields_ok g (GMM.nursery_refs minor g) sp obj)
           (ensures GI.phase_shape minor g fp Ph.Marking sp)
 
 /// ---------------------------------------------------------------------------

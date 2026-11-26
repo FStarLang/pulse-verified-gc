@@ -201,7 +201,7 @@ let ipre (minor: minor_state) (g: heap) (st: pstate) : prop =
 /// ... read only where it follows a pointer (design doc §12).
 let ipre_w (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t) : prop =
   PA.inv I.Idle g st /\ minor_wf minor /\ fields_follow minor /\ roots_follow minor roots /\
-  major_targets free_stw minor g
+  GenInv.minor_major_fields_not_free free_stw minor g
 
 /// The blocks a change made: in use after, not before.
 let made (g g': heap) (x: obj_addr) : prop =
@@ -256,6 +256,5 @@ let i_facts (minor: minor_state) (g: heap) (st: pstate) (roots: seq U64.t)
     roots_of_infix_wf minor roots;
     idle_contract ();
     contract_wf idle_tal g st;
-    targets_of_not_free free_stw minor g;
     i_facts_w minor g st roots
 #pop-options

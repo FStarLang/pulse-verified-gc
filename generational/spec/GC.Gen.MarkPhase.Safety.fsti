@@ -58,7 +58,7 @@ val cycle_reachable_not_free (minor: minor_state) (g: heap) (fp: U64.t) (ph: Ph.
   : Lemma (requires GI.phase_shape minor g fp ph sp /\
                     RBridge.roots_not_free (GI.phase_free ph) roots g /\
                     CG.combined_reachable (CG.build_combined_graph minor g (GI.phase_free ph))
-                      (CG.classify_roots minor roots) (CG.MajorV a))
+                      (CG.classify_roots minor g roots) (CG.MajorV a))
           (ensures GC.Spec.FusedSweep.is_obj a /\ in_use (GI.phase_free ph) g (a <: obj_addr))
 
 /// **The roots across the hand-over**: when marking ends, every root that
@@ -90,7 +90,7 @@ val slice_keeps_reachable (minor: minor_state) (g: heap) (sp: MP.scan_pos) (fp: 
   : Lemma (requires GI.phase_shape minor g fp ph sp /\ GI.major_slice_post g sp fp ph budget g' sp' fp' ph' /\
                     RBridge.roots_not_free (GI.phase_free ph) roots g /\
                     CG.combined_reachable (CG.build_combined_graph minor g (GI.phase_free ph))
-                      (CG.classify_roots minor roots) (CG.MajorV a))
+                      (CG.classify_roots minor g roots) (CG.MajorV a))
           (ensures GC.Spec.FusedSweep.is_obj a /\
                    SPI.same_block g g' (hd_address (a <: obj_addr)) /\
                    Seq.mem (a <: obj_addr) (objects zero_addr g') /\ ~(is_blue (a <: obj_addr) g'))
