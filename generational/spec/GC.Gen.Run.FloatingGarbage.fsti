@@ -113,6 +113,18 @@ val gone_stays_gone (#es1: list event) (#r1: real_state) (rn1: run (initial_stat
   : Lemma (requires id < alloc_count es1 /\ no_block rn1 id)
           (ensures no_block (run_append rn1 rn2) id)
 
+/// A run that carries out `ps` has one program event per event of `ps`.
+val executes_length (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
+                    (ps: list I.program_event)
+  : Lemma (requires executes rn ps)
+          (ensures GC.Gen.Run.IdAccounting.n_program (kinds es) == List.Tot.length ps)
+
+/// The accounting's memory is the program's.
+val account_mem (a: GC.Gen.Run.IdAccounting.acc) (ks: list kind) (ps: list I.program_event)
+  : Lemma (requires GC.Gen.Run.IdAccounting.n_program ks == length ps)
+          (ensures (GC.Gen.Run.IdAccounting.account a ks ps).GC.Gen.Run.IdAccounting.mem ==
+                   I.ideal_run_from a.GC.Gen.Run.IdAccounting.mem ps)
+
 /// **Garbage is freed by the end of the next cycle.**  The run carries out
 /// a well-formed program `ps1 @ ps2`, its part `rn1` (to the point) carrying
 /// out `ps1`.  The object `id` exists after `ps1` and the program cannot
@@ -139,3 +151,4 @@ val floating_garbage_bound
                     I.valid_id (I.ideal_run ps1) id /\ ~(I.reachable (I.ideal_run ps1) id) /\
                     starts_a_cycle es2 /\ r2.phase == Ph.Idle)
           (ensures no_block (run_append rn1 rn2) id /\ no_block (run_append (run_append rn1 rn2) rn3) id)
+

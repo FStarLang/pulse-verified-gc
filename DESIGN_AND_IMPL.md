@@ -1996,6 +1996,39 @@ account still has it (floating), with one it is gone and the reachable
 object stays; it states both of every idle run that carries the program
 out on those schedules.  No SPOT builds such a run concretely.
 
+#### Snapshot at the beginning
+
+`GC.Gen.Run.Snapshot` states snapshot-at-the-beginning for a whole cycle
+of an arbitrary run (any interleaving of program and collector events, any
+slice budgets), in terms of ids.  Cut the run at a cycle start: `rn1`
+carries out the program events `ps1`, the rest `rn2` is one whole cycle
+(`one_cycle`: its events begin with `StartCycle` and start no other cycle)
+and ends idle.  Then, for every object with a block at the cut,
+
+- **`snapshot_at_the_beginning`**: it has no block at the end of the cycle
+  exactly when it is not reachable in the ideal memory after `ps1`.  The
+  cycle frees exactly what was garbage when it started, which is what a
+  stop-the-world collection there would free.  The `<=` direction is
+  `floating_garbage_freed`; the `=>` direction
+  (`reachable_at_start_survives`, which needs no block at the cut) is the
+  snapshot: the cycle start sets the account's kept set to what is
+  reachable, no other cycle starts, so until the cycle ends the kept set
+  only grows (major allocations and promotions add to it; nothing else
+  changes it), and idle the objects with a block are exactly the account's
+  (`GC.Gen.Run.Hoisted.ids_at_idle`).
+- **`snapshot_hoisted`**: since ids are shared across runs of the same
+  program, the cycle frees the same objects in a run and in its hoisted run
+  (cut at the same point; `hoist_append`: hoisting commutes with the cut).
+  An object with a block at the cut in one has one in the other
+  (`live_ids_hoist`), and each frees it exactly when it was unreachable.
+
+The SPOT (`GC.SPOT.Snapshot`) extends the program of
+`GC.SPOT.FloatingGarbage` with a `SetRoots []` during the cycle: at the
+end, the object that was garbage at the start has no block, and the one
+that was reachable at the start still has one, though the program can no
+longer reach it (it floats until the next cycle); it states both of every
+idle run that carries the program out on that schedule.
+
 ## The minor collector
 
 The generational collector adds a nursery. The nursery is modeled separately
