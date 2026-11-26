@@ -3915,3 +3915,34 @@ Steps 1-3 need no change of specification and can start now.  Step 4
 cannot start before U1 is decided.  Without it, the theorems can cover
 allocation, sweep and minor collection of the running code, but not its
 marking.
+
+### 18.8 Progress
+
+**Step 1 (pages allocation and sweep, with the glue): built.**  Three new
+modules; no specification module changed.
+- `GC.Spec.Top.CodeRun` (any collector): `cur es`, the configuration after
+  the events `es`; `snoc`: an allowed event extends a run, and its
+  configuration is `step`; `point`: at every point of a run the
+  conclusions' facts hold, among them the allocator's invariant (so L13
+  for the allocator comes from `gc_correct` itself).
+- `GC.Spec.Top.CodePages`: L1 (`lo_ok`, kept by every wrapper, so
+  `gl g s == g`); the page invariant the Pulse code asks for
+  (`good_inv`); the initial configuration from a zeroed heap; L2 with the
+  Fill as the words written in order (`fill_from`, `binit_fill`); the
+  sweep's start, a step at `nextu` of the cursor, and `done_iff` (done
+  exactly when no unit is left from the cursor); the root events.
+- `GC.Impl.Pages.Top` (Pulse): `crep heap t pr cr sty es` (the heap, the
+  page state, the phase code and the cursor represent `xc es`, a run of
+  style `sty`); wrappers `init_top` (checks `n_pages > 0`, zeroes the heap,
+  then `Init.init`: U6 closed with no trusted assumption), `alloc_top`
+  (`alloc_ph`, then the Fill from an array of words), `handover_top`
+  (`start_sweep`), `sweep_step_top` (finds the next unit, then
+  `sweep_unit` as `ESweep`, or `EEnd` when none is left), and ghost
+  `roots_top`, `read_top`.  Each ensures `crep` of the run one event
+  longer.
+
+Not yet covered: the mark and the barrier (step 4), so code runs reach
+`Marking` and `Sweeping` only after step 4; the minor collection and the
+nursery (step 2, U2); the budgeted `sweep_slice` as several events (a
+loop of `sweep_step_top` does the same work); the wrappers are not in the
+`pages-c` extraction.
