@@ -119,10 +119,15 @@ let check_anchors label n (get : int -> int array) (len : int) =
 let majors () = (Gc.quick_stat ()).Gc.major_collections
 let minors () = (Gc.quick_stat ()).Gc.minor_collections
 
+(* The cap is a safety valve, not a timing: on stock, section 8's 4 cycles
+   take about 12M spins (4.14's tiny slices go a whole 2 KB block over their
+   budget, so its cycles on a heap of large blocks end early), and the
+   verified stop-the-world collector, which sums 4.14's pacing without
+   slices, about 67M. *)
 let churn_majors n =
   let target = majors () + n in
   let spins = ref 0 in
-  while majors () < target && !spins < 50_000_000 do
+  while majors () < target && !spins < 200_000_000 do
     ignore (Sys.opaque_identity (Array.make 24 0));
     incr spins
   done;

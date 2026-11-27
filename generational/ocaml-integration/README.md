@@ -111,22 +111,25 @@ at exit.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `VERGC_MAJOR` | `stw` | `stw`: every major collection marks and sweeps at once (`full_gc`). `incremental`: 4.14's rhythm -- after each minor collection, at Idle `start_cycle` when the trigger fires, otherwise one `major_slice` that marks or sweeps, its budget paced as 4.14's `caml_major_collection_slice`. Any other value warns once and means `stw`. `VERGC_SWEEP` is an alias. |
+| `VERGC_MAJOR` | `stw` | `stw`: every major collection marks and sweeps at once (`full_gc`), where 4.14's incremental cycle would have ended (its pacing summed on a model of 4.14's heap size), or when the words promoted since the last one would exceed half the heap. `incremental`: 4.14's rhythm -- after each minor collection, at Idle `start_cycle` (cycles run back to back, as in 4.14), otherwise one `major_slice` that marks or sweeps, its budget paced as 4.14's `caml_major_collection_slice`. Any other value warns once and means `stw`. `VERGC_SWEEP` is an alias. |
 | `VERGC_MARK_STACK` | `max(heap bytes / 64, 4096)` | Capacity of the persistent mark stack, in entries (testing: a small stack makes root darkening and marking overflow, so the mark slices rescan). |
-| `VERGC_SLICE_MIN_WORDS` | 4096 | incremental: the smallest automatic slice, in words (`VERGC_SWEEP_MIN_WORDS` is an alias) |
+| `VERGC_SLICE_MIN_WORDS` | 1 | incremental: the smallest slice that has work to do, in words; a slice with none is skipped, as in 4.14 (`VERGC_SWEEP_MIN_WORDS` is an alias) |
 | `VERGC_SLICE_WORDS` | 0 | incremental, testing: a fixed budget for every automatic slice instead of the paced one (0: paced) |
-| `VERGC_TRIGGER_MIN_WORDS` | heap / 8 | incremental: the least major allocation between two cycles |
 | `VERGC_MAJOR_STATS` | unset | `1`: print the major collector's counters and pause times to stderr at exit (`VERGC_SWEEP_STATS` is an alias) |
 
-The pacing also reads `space_overhead` (`o`) and `window_size` (`w`), set by
-`Gc.set` or `OCAMLRUNPARAM` as usual.  A cycle in progress is finished at
+The pacing, in both modes, also reads `space_overhead` (`o`), `window_size`
+(`w`, incremental), `major_heap_increment` (`i`) and the initial heap size
+(`h`), set by `Gc.set` or `OCAMLRUNPARAM` as usual: the last two drive the
+model of the size 4.14's heap would have, on which the pacing is computed,
+since our heap's own size is fixed (`MIN_EXPANSION_WORDSIZE`).  A cycle in progress is finished at
 once only for a full collection, a failed major allocation (finish and
 retry, then a full collection and retry), or a minor collection that might
 not find room to promote into.  `Gc.full_major`, `Gc.major` and `Gc.compact`
 run a whole verified cycle, and `Gc.major_slice` starts a cycle when idle or
 runs a slice (see "Stock collector entry points" above). See
-`verified_gc/OCAML_INTEGRATION.md`, "The Major Mode", for the trigger, the
-pacing and how the bridge meets the trusted obligations listed in
+`verified_gc/OCAML_INTEGRATION.md`, "The Major Mode", for the pacing (when
+cycles start and how much work each slice does), the differences from 4.14
+that remain, and how the bridge meets the trusted obligations listed in
 `GC.Gen.Impl`.
 
 ## Tests
