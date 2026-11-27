@@ -124,7 +124,7 @@ let copies_faithful_objects (m: real_memory) (h: cycle_history) (im im': I.ideal
 
 let represents_ext r h im ids ids' =
   copies_faithful_ext r.memory h im ids ids';
-  assert (keyed r.memory ids');
+  assert (ids_injective_on_allocated r.memory ids');
   assert (covers_reachable im ids');
   assert (retains_snapshot r h ids')
 
@@ -164,7 +164,7 @@ let initial_sim_inv _ =
   let aux2 (id: I.obj_id) : Lemma (~(I.reachable I.empty_ideal id)) =
     FStar.Classical.move_requires (reachable_closed I.empty_ideal (fun _ -> False)) id in
   FStar.Classical.forall_intro aux2;
-  assert (keyed r.memory empty_ids);
+  assert (ids_injective_on_allocated r.memory empty_ids);
   assert (covers_reachable I.empty_ideal empty_ids);
   assert (retains_snapshot r h empty_ids)
 
@@ -269,7 +269,7 @@ let write_reachable im obj i v id =
 #push-options "--z3rlimit 60"
 let write_block_rep (r r': real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
     (b: block_addr) (i: nat) (v: U64.t) (obj: I.obj_id) (v': I.value) (b': block_addr) (id: I.obj_id)
-  : Lemma (requires keyed r.memory ids /\ copies_faithful r.memory h im ids /\
+  : Lemma (requires ids_injective_on_allocated r.memory ids /\ copies_faithful r.memory h im ids /\
                     I.wf_objects im /\ I.wf_event im (I.Write obj i v') /\ ids b == Some obj /\
                     written_rep r.memory ids b v' v /\ write_frame r r' b i v /\ ids b' == Some id)
           (ensures I.valid_id (I.ideal_step im (I.Write obj i v')) id /\
@@ -300,7 +300,7 @@ let write_block_rep (r r': real_state) (h: cycle_history) (im: I.ideal_memory) (
 
 let write_represents r r' h im ids b i v obj v' =
   let im' = I.ideal_step im (I.Write obj i v') in
-  assert (keyed r'.memory ids);
+  assert (ids_injective_on_allocated r'.memory ids);
   (match b with Major x -> assert (kept h x) | Nursery _ -> ());
   assert (faithful_block h b);
   introduce forall (b': block_addr) (id: I.obj_id).

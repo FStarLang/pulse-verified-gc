@@ -1923,6 +1923,112 @@ its size, tag and field.
 **Not done**: no SPOT builds a whole run of the cycle to `Idle` and applies
 `cycle_lossless` (that needs concrete mark steps to the hand-over).
 
+#### Observational equivalence
+
+`GC.Gen.Run.Simulation` relates a real run (`GC.Gen.Run.Step`: the program's
+events and the collector's, in any interleaving) to the program's ideal run
+(`GC.Model.Ideal`: no collector, unlimited memory) through a map from blocks
+to object ids (`GC.Model.Represents`).  `GC.Gen.Run.Observation` states what
+that means for the program as an equality of traces:
+
+- the **ideal trace** `ideal_obs ps`: the field contents the program's reads
+  return, each on the ideal memory just before the read;
+- the **real trace** `real_obs rn`: for each `Read b i` of the run, the word
+  in field `i` of block `b`, read back through the map at that point
+  (`abs_content`).  In a scannable block, a word that points `k` words into a
+  block with id `id` becomes `Ptr { id; k }` and any other word stays a
+  `Word`; in a no-scan block the word stays raw.
+
+`observational_equivalence`: for a well-formed program and any run that
+carries it out (`executes`), `real_obs rn == ideal_obs ps`.  The proof goes by
+induction over the run.  Collector events add nothing to either trace, and a
+read agrees by `reads_agree_state`, because the abstraction inverts
+`value_rep` (`abs_value_rep`).  That inversion needs a pointer to name exactly
+one block, at exactly one offset (`points_into_unique`: major bodies are
+disjoint, `GC.Gen.MarkState.bodies_disjoint`; nursery bodies are disjoint,
+`GC.Gen.Run.NurseryFrame.bodies_disjoint`; a major pointer is never young).
+It also needs a non-pointer word to point into no block, which holds because
+`Word`s lie outside both heaps (`outside_heaps`, trusted in `value_rep`).
+Corollaries:
+`same_program_same_obs` (two runs of the same program, whatever their
+schedules, incremental or stop the world, observe the same values) and
+`physical_equality` / `physical_equality_run` (two words holding valid ideal
+values are equal exactly when the values are, so `==` on real words is `==`
+on the program's values).  `GC.SPOT.Observation` computes the trace of the
+concrete run of `GC.SPOT.MutatorRun`: it is the one read, returning the
+written int.
+
+#### Floating garbage
+
+Snapshot-at-the-beginning keeps everything reachable when a cycle starts,
+so an object that becomes garbage during a cycle survives that cycle's
+sweep.  `GC.Gen.Run.FloatingGarbage` bounds how long, against the ideal
+run of `GC.Gen.Run.Simulation` (an object is its allocation index; it is
+garbage when it is not reachable from the program's roots there):
+
+- **Garbage stays garbage** (`garbage_stays_garbage`, ideal side): a
+  well-formed event never makes an unreachable object reachable again
+  (an allocation gets a fresh id and is initialised with values the
+  program can reach, a write stores such a value, new roots are such
+  values).
+- **Garbage is freed by the end of the next cycle**
+  (`floating_garbage_freed`): a point of a run is a run `rn1` that the rest
+  of the run `rn2` extends (`run_append rn1 rn2`); if object `id` exists
+  and is unreachable after the program events `rn1` carries out, and `rn2`
+  starts a cycle and ends idle, no block of the real memory holds `id`.
+- **It never comes back** (`gone_stays_gone`): once no block holds an
+  allocated object, no block holds it at any later point, idle or not,
+  whatever the schedule: a block gets an id only from an allocation (the
+  next id) or from a promotion (the id of the nursery block it copies).
+  `floating_garbage_bound` combines the two.
+
+So an object's block is freed by the end of the first complete cycle that
+starts after the object becomes unreachable: garbage lives at most the
+rest of the cycle in progress plus one full cycle.  The proof is
+address-free: the id-level account of `GC.Gen.Run.IdAccounting` drops the
+object from its kept set at the cycle's start (it is not reachable, and the
+nursery is empty when a cycle starts, `GC.Gen.Run.Hoisted.nursery_ids`);
+afterwards only fresh allocations and promoted nursery objects join; and
+idle, the objects with a block are exactly the account's
+(`GC.Gen.Run.Hoisted.ids_at_idle`).  The SPOT (`GC.SPOT.FloatingGarbage`)
+drops an object with `SetRoots`: on a schedule with no cycle afterwards the
+account still has it (floating), with one it is gone and the reachable
+object stays; it states both of every idle run that carries the program
+out on those schedules.  No SPOT builds such a run concretely.
+
+#### Snapshot at the beginning
+
+`GC.Gen.Run.Snapshot` states snapshot-at-the-beginning for a whole cycle
+of an arbitrary run (any interleaving of program and collector events, any
+slice budgets), in terms of ids.  Cut the run at a cycle start: `rn1`
+carries out the program events `ps1`, the rest `rn2` is one whole cycle
+(`one_cycle`: its events begin with `StartCycle` and start no other cycle)
+and ends idle.  Then, for every object with a block at the cut,
+
+- **`snapshot_at_the_beginning`**: it has no block at the end of the cycle
+  exactly when it is not reachable in the ideal memory after `ps1`.  The
+  cycle frees exactly what was garbage when it started, which is what a
+  stop-the-world collection there would free.  The `<=` direction is
+  `floating_garbage_freed`; the `=>` direction
+  (`reachable_at_start_survives`, which needs no block at the cut) is the
+  snapshot: the cycle start sets the account's kept set to what is
+  reachable, no other cycle starts, so until the cycle ends the kept set
+  only grows (major allocations and promotions add to it; nothing else
+  changes it), and idle the objects with a block are exactly the account's
+  (`GC.Gen.Run.Hoisted.ids_at_idle`).
+- **`snapshot_hoisted`**: since ids are shared across runs of the same
+  program, the cycle frees the same objects in a run and in its hoisted run
+  (cut at the same point; `hoist_append`: hoisting commutes with the cut).
+  An object with a block at the cut in one has one in the other
+  (`live_ids_hoist`), and each frees it exactly when it was unreachable.
+
+The SPOT (`GC.SPOT.Snapshot`) extends the program of
+`GC.SPOT.FloatingGarbage` with a `SetRoots []` during the cycle: at the
+end, the object that was garbage at the start has no block, and the one
+that was reachable at the start still has one, though the program can no
+longer reach it (it floats until the next cycle); it states both of every
+idle run that carries the program out on that schedule.
+
 ## The minor collector
 
 The generational collector adds a nursery. The nursery is modeled separately

@@ -129,7 +129,10 @@ SPOT_SRC = \
   GC.SPOT.IncrementalCycleTheorems.fst \
   GC.SPOT.GcCorrect.fsti \
   GC.SPOT.GcCorrect.fst \
-  GC.SPOT.MutatorRun.fst
+  GC.SPOT.MutatorRun.fst \
+  GC.SPOT.Observation.fst \
+  GC.SPOT.FloatingGarbage.fst \
+  GC.SPOT.Snapshot.fst
 
 # All checked files land in one shared cache, so targets are derived from the
 # module file name alone.

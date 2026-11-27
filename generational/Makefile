@@ -80,11 +80,15 @@ checked = $(addprefix $(CACHE_DIR)/,$(addsuffix .checked,$(notdir $(1))))
 # through it, Safety and Completeness only as roots; GC.Gen.Run.Simulation
 # (mutator equivalence, which reaches GC.Gen.Run.Invariant, the theorems of a
 # run of the whole cycle), GC.Gen.Cheney.Soundness (what a minor collection
-# forwards, for it) and GC.Gen.Run.Hoisted (the hoisted run) are roots too,
+# forwards, for it), GC.Gen.Run.Hoisted (the hoisted run) and
+# GC.Gen.Run.Observation (observational equivalence),
+# GC.Gen.Run.FloatingGarbage (how long garbage survives) and
+# GC.Gen.Run.Snapshot (a cycle frees exactly the garbage at its start) are
+# roots too,
 # as are GC.Gen.SweepPhase.Cycle, GC.Gen.MarkPhase.Cycle and GC.Gen.Cycle
 # (runs of the sweep, of marking and of the cycle, which the page
 # allocator's cycle proofs build on).
-ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst impl/GC.Gen.Impl.Barrier.fsti impl/GC.Gen.Impl.Barrier.fst spec/GC.Gen.SweepPhase.fst spec/GC.Gen.SweepPhase.Minor.fst spec/GC.Gen.SweepPhase.Safety.fst spec/GC.Gen.SweepPhase.Completeness.fst spec/GC.Gen.MarkPhase.Alloc.fst spec/GC.Gen.MarkPhase.Completeness.fst spec/GC.Gen.MarkPhase.Safety.fst spec/GC.Gen.Run.Simulation.fsti spec/GC.Gen.Run.Simulation.fst spec/GC.Gen.Run.Simulation.Enabled.fsti spec/GC.Gen.Run.Simulation.Enabled.fst spec/GC.Gen.Run.Simulation.Frame.fst spec/GC.Gen.Run.Simulation.Alloc.fst spec/GC.Gen.Run.Simulation.Steps.fst spec/GC.Gen.Run.Simulation.Collector.fsti spec/GC.Gen.Run.Simulation.Collector.fst spec/GC.Gen.Run.Simulation.Minor.fsti spec/GC.Gen.Run.Simulation.Minor.fst spec/GC.Gen.Cheney.Soundness.fsti spec/GC.Gen.Cheney.Soundness.fst spec/GC.Gen.Run.Hoisted.fsti spec/GC.Gen.Run.Hoisted.fst spec/GC.Gen.SweepPhase.Cycle.fst spec/GC.Gen.MarkPhase.Cycle.fst spec/GC.Gen.Cycle.fst
+ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst impl/GC.Gen.Impl.Barrier.fsti impl/GC.Gen.Impl.Barrier.fst spec/GC.Gen.SweepPhase.fst spec/GC.Gen.SweepPhase.Minor.fst spec/GC.Gen.SweepPhase.Safety.fst spec/GC.Gen.SweepPhase.Completeness.fst spec/GC.Gen.MarkPhase.Alloc.fst spec/GC.Gen.MarkPhase.Completeness.fst spec/GC.Gen.MarkPhase.Safety.fst spec/GC.Gen.Run.Simulation.fsti spec/GC.Gen.Run.Simulation.fst spec/GC.Gen.Run.Simulation.Enabled.fsti spec/GC.Gen.Run.Simulation.Enabled.fst spec/GC.Gen.Run.Simulation.Frame.fst spec/GC.Gen.Run.Simulation.Alloc.fst spec/GC.Gen.Run.Simulation.Steps.fst spec/GC.Gen.Run.Simulation.Collector.fsti spec/GC.Gen.Run.Simulation.Collector.fst spec/GC.Gen.Run.Simulation.Minor.fsti spec/GC.Gen.Run.Simulation.Minor.fst spec/GC.Gen.Cheney.Soundness.fsti spec/GC.Gen.Cheney.Soundness.fst spec/GC.Gen.Run.Hoisted.fsti spec/GC.Gen.Run.Hoisted.fst spec/GC.Gen.Run.Observation.fsti spec/GC.Gen.Run.Observation.fst spec/GC.Gen.Run.FloatingGarbage.fsti spec/GC.Gen.Run.FloatingGarbage.fst spec/GC.Gen.Run.Snapshot.fsti spec/GC.Gen.Run.Snapshot.fst spec/GC.Gen.SweepPhase.Cycle.fst spec/GC.Gen.MarkPhase.Cycle.fst spec/GC.Gen.Cycle.fst
 ROOT_CHECKED = $(call checked,$(ROOT_SRC))
 ALL_CHECKED  = $(call checked,$(ALL_SRC))
 

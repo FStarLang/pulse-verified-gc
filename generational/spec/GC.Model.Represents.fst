@@ -9,7 +9,7 @@
 ///
 /// `allocated_block_id` (a `block_id_map`) names, for each allocated block of
 /// the real memory, the ideal object it holds: `Some id` exactly at the
-/// allocated blocks (`keyed`), and injective.  It exists only in the proof.
+/// allocated blocks, and injective (`ids_injective_on_allocated`).  It exists only in the proof.
 /// It starts empty and changes one event at a time (`update_block_ids`,
 /// the plan's table): an allocation adds its new block with the next id; a
 /// minor collection moves a live nursery block's entry to its promoted copy
@@ -36,7 +36,7 @@
 ///   3. **`retains_snapshot`**: when the collector is idle, the major heap's
 ///      blocks with an id are exactly the cycle's snapshot and the blocks
 ///      allocated since (`GC.Gen.Run.History.kept`): the memory half.
-/// and `ids` is `keyed`.  The plan's clause 3, **`roots_represented`** (the
+/// and `ids_injective_on_allocated` holds of `ids`.  The plan's clause 3, **`roots_represented`** (the
 /// roots handed to `minor_collect` and `start_cycle` are the ideal roots,
 /// translated), is a property of those calls, not of a state: it is defined
 /// here and assumed at those two calls only (trusted).
@@ -73,7 +73,7 @@ let block_id_map = block_addr -> GTot (option I.obj_id)
 let empty_ids : block_id_map = fun _ -> None
 
 /// `Some` exactly at the allocated blocks, and injective.
-let keyed (m: real_memory) (ids: block_id_map) : prop =
+let ids_injective_on_allocated (m: real_memory) (ids: block_id_map) : prop =
   (forall (b: block_addr). Some? (ids b) <==> is_allocated m b) /\
   (forall (b1 b2: block_addr). Some? (ids b1) /\ ids b1 == ids b2 ==> b1 == b2)
 
@@ -173,51 +173,29 @@ let retains_snapshot (r: real_state) (h: cycle_history) (ids: block_id_map) : pr
 /// **The real state represents the ideal memory**, through `ids`, relative
 /// to the cycle's history `h`.
 let represents (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) : prop =
-  keyed r.memory ids /\ copies_faithful r.memory h im ids /\ covers_reachable im ids /\
+  ids_injective_on_allocated r.memory ids /\ copies_faithful r.memory h im ids /\ covers_reachable im ids /\
   retains_snapshot r h ids
 
 /// ---------------------------------------------------------------------------
 /// The real events that carry out the program's
 /// ---------------------------------------------------------------------------
 
-/// **Trusted: where a pointer to a nursery block lies**, at the words a
-/// program event stores.  The spec cannot see where the nursery lies
-/// (`GC.Gen.Base.minor_base_addr` is abstract), so the word of a pointer to
-/// a nursery block is assumed to be laid out as the runtime lays it out: not
-/// a major-heap address, and the nursery's base plus the object's offset
-/// plus the infix offset, without wrapping (the nursery lies apart from the
-/// major heap, at an aligned address).  (A `Word` lies outside both heaps:
-/// `outside_heaps`, in `value_rep`.  A pointer into the major heap is not a
-/// nursery address: that follows from `GC.Gen.Base.zero_addr_above_minor`.)
-let word_layout (ids: block_id_map) (v: I.value) (w: U64.t) : prop =
-  match v with
-  | I.Word _ -> True
-  | I.Ptr { head; infix_offset } ->
-      forall (o: U64.t). ids (Nursery o) == Some head ==>
-        ~(is_pointer w) /\ U64.v (GC.Gen.Base.to_minor_offset w) == U64.v o + 8 * infix_offset
-
-/// The words a program event stores carry the layout (`word_layout`): the
-/// initial fields of a scannable object, and a written value.
-let fields_layout (ids: block_id_map) (f: I.ideal_fields) (ws: seq U64.t) : prop =
-  match f with
-  | I.Scannable vs -> forall (i: nat). i < Seq.length vs /\ i < Seq.length ws ==>
-                        word_layout ids (Seq.index vs i) (Seq.index ws i)
-  | I.NoScan _ -> True
-
 /// **`e` carries out `pe`** in the real memory `m`: the same event with the
 /// objects and values translated by `ids` (the allocation site is the
 /// runtime's choice).  A write into a no-scan block stores the word itself
 /// (raw bytes, a float), as an allocation's no-scan fields do
-/// (`fields_rep`); into a scannable block, the value translated, its word
-/// laid out as the runtime lays it out (trusted, `word_layout`), as are an
-/// allocation's scannable fields (`fields_layout`).
+/// (`fields_rep`); into a scannable block, the value translated
+/// (`value_rep`).  Where the word of a pointer to a nursery block lies (an
+/// offset in the nursery, not a major-heap address) is not part of this:
+/// it follows from `value_rep`, the map being injective (`ids_injective_on_allocated`) and the nursery's
+/// shape (`GC.Gen.Run.Simulation.Enabled.word_layout_holds`).
 let translates (m: real_memory) (ids: block_id_map) (e: event) (pe: I.program_event) : prop =
   match e, pe with
   | Alloc _ tag size init, I.Alloc tag' size' f ->
-      tag == tag' /\ size == size' /\ fields_rep ids f init /\ fields_layout ids f init
+      tag == tag' /\ size == size' /\ fields_rep ids f init
   | Write b i v, I.Write obj i' v' ->
       ids b == Some obj /\ i == i' /\
-      (if block_tag m b < 251 then value_rep ids v' v /\ word_layout ids v' v
+      (if block_tag m b < 251 then value_rep ids v' v
        else (match v' with I.Word w -> v == w | I.Ptr _ -> False))
   | Read b i, I.Read obj i' -> ids b == Some obj /\ i == i'
   | SetRoots rs, I.SetRoots vs -> roots_represented ids vs rs

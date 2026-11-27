@@ -79,7 +79,7 @@ val represents_ext (r: real_state) (h: cycle_history) (im: I.ideal_memory) (ids 
 
 /// Keeping the entries of the allocated blocks changes nothing.
 val restrict_keyed (m: real_memory) (ids: block_id_map) (b: block_addr)
-  : Lemma (requires keyed m ids) (ensures restrict m ids b == ids b)
+  : Lemma (requires ids_injective_on_allocated m ids) (ensures restrict m ids b == ids b)
 
 /// ---------------------------------------------------------------------------
 /// The lemmas of `GC.Gen.Run.Simulation`

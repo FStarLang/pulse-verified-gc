@@ -65,6 +65,11 @@ module ID = FStar.IndefiniteDescription
 /// 1. The accounting along a run
 /// ---------------------------------------------------------------------------
 
+let step_hyps_hold (_: unit) : Lemma step_hyps
+  = GC.Gen.Run.Hoisted.Nursery.nursery_frames ();
+    GC.Gen.Run.Hoisted.Start.start_snapshot_holds ();
+    GC.Gen.Run.Hoisted.MinorPromotes.minor_promotes_holds ()
+
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 let initial_acc (_: unit)
   : Lemma (acc_inv (initial_state ()) (initial_history ()) empty_ids empty_acc)
@@ -207,6 +212,15 @@ let ids_at_idle (#es: list event) (#r: real_state) (rn: run (initial_state ()) e
                  | Major x -> assert (is_allocated r.memory (Major x)); assert (kept h x))
     end
 #pop-options
+
+let nursery_ids (#es: list event) (#r: real_state) (rn: run (initial_state ()) es r)
+                (ps: list I.program_event)
+  : Lemma (requires I.wf_program ps /\ executes rn ps)
+          (ensures forall (id: I.obj_id).
+                     (account empty_acc (kinds es) ps).nurs id <==>
+                     (exists (o: U64.t). ids_of_run rn (Nursery o) == Some id))
+  = step_hyps_hold ();
+    acc_along rn ps
 
 /// ---------------------------------------------------------------------------
 /// 2. The hoisted run ends idle
@@ -352,7 +366,7 @@ let word_points_nowhere (m: real_memory) (w: U64.t)
 /// A pointer value lands in the block holding its object, at its offset.
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let ptr_points_into (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) (hd: I.obj_id) (k: nat) (w: U64.t)
-  : Lemma (requires keyed m ids /\ copies_faithful m h im ids /\ I.wf_objects im /\
+  : Lemma (requires ids_injective_on_allocated m ids /\ copies_faithful m h im ids /\ I.wf_objects im /\
                     I.valid_value im (I.Ptr { I.head = hd; I.infix_offset = k }) /\
                     value_rep ids (I.Ptr { I.head = hd; I.infix_offset = k }) w)
           (ensures exists (c: block_addr). ids c == Some hd /\ points_into m w c k)
@@ -367,7 +381,7 @@ let ptr_points_into (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (id
 /// same objects, are isomorphic.**
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
 let iso_from_ids (m1 m2: real_memory) (h1 h2: cycle_history) (im: I.ideal_memory) (ids1 ids2: block_id_map)
-  : Lemma (requires keyed m1 ids1 /\ keyed m2 ids2 /\ copies_faithful m1 h1 im ids1 /\ copies_faithful m2 h2 im ids2 /\
+  : Lemma (requires ids_injective_on_allocated m1 ids1 /\ ids_injective_on_allocated m2 ids2 /\ copies_faithful m1 h1 im ids1 /\ copies_faithful m2 h2 im ids2 /\
                     (forall (b: block_addr). Some? (ids1 b) ==> faithful_block h1 b) /\
                     (forall (b: block_addr). Some? (ids2 b) ==> faithful_block h2 b) /\
                     I.wf_memory im /\ I.wf_objects im /\

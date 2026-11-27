@@ -58,7 +58,7 @@ let pointer_to_eq (fv: U64.t) (c: obj_addr)
 
 /// The facts of an idle state with an empty nursery that the proof reads.
 let start_facts (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) : prop =
-  keyed m ids /\ copies_faithful m h im ids /\ blocks_fit m.major /\ I.wf_objects im /\ I.wf_memory im /\
+  ids_injective_on_allocated m ids /\ copies_faithful m h im ids /\ blocks_fit m.major /\ I.wf_objects im /\ I.wf_memory im /\
   (forall (x: obj_addr). is_allocated m (Major x) ==> kept h x) /\
   (forall (o: U64.t). ~(Seq.mem o (minor_objects m.nursery)))
 

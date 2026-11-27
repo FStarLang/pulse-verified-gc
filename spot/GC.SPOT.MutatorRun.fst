@@ -18,11 +18,10 @@
 /// here for these concrete nurseries: every word is an object's header or
 /// reads as no header (`words_ok`).  No hypothesis.
 ///
-/// (A pointer stored into the nursery would need, besides the trusted
-/// layout of its word -- `GC.Model.Represents.word_layout`, since
-/// `GC.Gen.Base.minor_base_addr` is abstract -- that the word not read as a
-/// nursery header, which the abstract layout does not give: so the stored
-/// value here is an int.)
+/// (A pointer stored into the nursery would need that the word not read as
+/// a nursery header, the nursery's trusted shape, which the layout of its
+/// word -- derived, `GC.Gen.Run.Simulation.Enabled.word_layout_holds` --
+/// does not give: so the stored value here is an int.)
 ///
 /// The major heap is untouched, and that nothing in it is allocated at the
 /// start comes from the run invariant at the initial state

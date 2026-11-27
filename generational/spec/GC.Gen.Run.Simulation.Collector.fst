@@ -99,19 +99,19 @@ let ptr_resolves (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: 
 /// ---------------------------------------------------------------------------
 
 let ctx (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) : prop =
-  well_formed_heap m.major /\ keyed m ids /\ copies_faithful m h im ids /\
+  well_formed_heap m.major /\ ids_injective_on_allocated m ids /\ copies_faithful m h im ids /\
   I.wf_memory im /\ I.wf_objects im /\ m.nursery == minor_reset m.nursery /\
   (forall (x: obj_addr). is_allocated m (Major x) ==> kept h x)
 
 /// With the nursery empty, only major blocks have ids.
 let no_nursery_ids (m: real_memory) (ids: block_id_map) (o: U64.t)
-  : Lemma (requires keyed m ids /\ m.nursery == minor_reset m.nursery)
+  : Lemma (requires ids_injective_on_allocated m ids /\ m.nursery == minor_reset m.nursery)
           (ensures None? (ids (Nursery o)))
   = minor_reset_objects_not_mem m.nursery o
 
 /// A pointer value held by a word: some major block holds its head.
 let ptr_rep_major (m: real_memory) (ids: block_id_map) (head: I.obj_id) (k: nat) (w: U64.t)
-  : Lemma (requires keyed m ids /\ m.nursery == minor_reset m.nursery /\
+  : Lemma (requires ids_injective_on_allocated m ids /\ m.nursery == minor_reset m.nursery /\
                     value_rep ids (I.Ptr { head; infix_offset = k }) w)
           (ensures exists (y: obj_addr). ids (Major y) == Some head /\ is_allocated m (Major y) /\
                      w == ptr_value (Major y) k)
@@ -392,7 +392,7 @@ let same_ids (ids ids': block_id_map) : prop = forall (b: block_addr). ids' b ==
 
 #push-options "--ifuel 1"
 let restrict_same (m m': real_memory) (ids: block_id_map)
-  : Lemma (requires keyed m ids /\ (forall (b: block_addr). is_allocated m' b <==> is_allocated m b))
+  : Lemma (requires ids_injective_on_allocated m ids /\ (forall (b: block_addr). is_allocated m' b <==> is_allocated m b))
           (ensures same_ids ids (restrict m' ids))
   = let aux (b: block_addr) : Lemma (restrict m' ids b == ids b) =
       if FStar.IndefiniteDescription.strong_excluded_middle (is_allocated m' b) then () else ()
@@ -422,10 +422,10 @@ let block_rep_same (m m': real_memory) (ids ids': block_id_map) (b: block_addr) 
 /// for the new history was faithful for the old one.
 #push-options "--ifuel 1"
 let represents_same (m m': real_memory) (h h': cycle_history) (im: I.ideal_memory) (ids ids': block_id_map)
-  : Lemma (requires same_blocks m m' /\ same_ids ids ids' /\ keyed m ids /\
+  : Lemma (requires same_blocks m m' /\ same_ids ids ids' /\ ids_injective_on_allocated m ids /\
                     copies_faithful m h im ids /\ covers_reachable im ids /\
                     (forall (b: block_addr). is_allocated m b /\ faithful_block h' b ==> faithful_block h b))
-          (ensures keyed m' ids' /\ copies_faithful m' h' im ids' /\ covers_reachable im ids')
+          (ensures ids_injective_on_allocated m' ids' /\ copies_faithful m' h' im ids' /\ covers_reachable im ids')
   = let aux (b: block_addr) (id: I.obj_id)
       : Lemma (requires ids' b == Some id)
               (ensures I.valid_id im id /\ block_header_rep m' b (Seq.index im.I.objects id) /\
@@ -442,7 +442,7 @@ let represents_same (m m': real_memory) (h h': cycle_history) (im: I.ideal_memor
           (faithful_block h' b ==> block_rep m' ids' b (Seq.index im.I.objects id))
     with introduce _ ==> _ with aux b id;
     assert (copies_faithful m' h' im ids');
-    assert (keyed m' ids');
+    assert (ids_injective_on_allocated m' ids');
     let cov (id: I.obj_id)
       : Lemma (requires I.reachable im id) (ensures exists (b: block_addr). ids' b == Some id)
       = eliminate exists (b: block_addr). ids b == Some id with assert (ids' b == Some id)
@@ -774,7 +774,7 @@ let in_use_kept (h: cycle_history) (g: heap) (y: obj_addr)
 #push-options "--ifuel 1 --z3rlimit 40"
 let kept_major_target (m: real_memory) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map)
                       (x: obj_addr) (id: I.obj_id) (i: nat) (y: obj_addr) (head: I.obj_id) (k: nat)
-  : Lemma (requires MPC.within_snapshot (kept h) m.major /\ keyed m ids /\ copies_faithful m h im ids /\
+  : Lemma (requires MPC.within_snapshot (kept h) m.major /\ ids_injective_on_allocated m ids /\ copies_faithful m h im ids /\
                     I.wf_memory im /\ I.wf_objects im /\
                     ids (Major x) == Some id /\ kept h x /\
                     I.valid_id im id /\ i < (Seq.index im.I.objects id).I.size /\
@@ -869,7 +869,7 @@ let kept_nursery_target (m: real_memory) (h: cycle_history) (im: I.ideal_memory)
                         (o: U64.t) (id: I.obj_id) (i: nat) (y: obj_addr) (head: I.obj_id) (k: nat)
   : Lemma (requires MPC.within_snapshot (kept h) m.major /\
                     GenInv.minor_major_fields_not_free (MPC.outside_snapshot (kept h)) m.nursery m.major /\
-                    keyed m ids /\ copies_faithful m h im ids /\
+                    ids_injective_on_allocated m ids /\ copies_faithful m h im ids /\
                     I.wf_memory im /\ I.wf_objects im /\
                     ids (Nursery o) == Some id /\
                     I.valid_id im id /\ i < (Seq.index im.I.objects id).I.size /\
@@ -943,7 +943,7 @@ let restrict_at (m': real_memory) (ids: block_id_map) (b: block_addr)
 
 /// The context of a slice's representation proof.
 let slice_ctx (r r': real_state) (h: cycle_history) (im: I.ideal_memory) (ids: block_id_map) : prop =
-  run_invariant r h /\ keyed r.memory ids /\ copies_faithful r.memory h im ids /\
+  run_invariant r h /\ ids_injective_on_allocated r.memory ids /\ copies_faithful r.memory h im ids /\
   I.wf_memory im /\ I.wf_objects im /\ slice_blocks_post r r' h
 
 /// A faithful block's pointer names a block that stays allocated.
@@ -1042,7 +1042,7 @@ let slice_represents (r r': real_state) (h: cycle_history) (im: I.ideal_memory) 
     let alloc_back (b: block_addr) : Lemma (requires is_allocated m' b) (ensures is_allocated r.memory b) =
       block_survives r r' h b in
     FStar.Classical.forall_intro (FStar.Classical.move_requires alloc_back);
-    assert (keyed m' ids');
+    assert (ids_injective_on_allocated m' ids');
     introduce forall (b: block_addr) (id: I.obj_id).
         ids' b == Some id ==>
           I.valid_id im id /\ block_header_rep m' b (Seq.index im.I.objects id) /\

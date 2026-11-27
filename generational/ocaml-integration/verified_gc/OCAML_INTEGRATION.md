@@ -933,42 +933,91 @@ plus the cursor and the sweep's two caches `swept_tail` and
 cursor); a new object is black while marking and in front of the sweep
 cursor, white otherwise.
 
-### The rhythm (incremental)
+### When collections start, and how much each slice does: 4.14's policy
 
-4.14's: after every minor collection, at Idle, `start_cycle` when the
-trigger fires -- the nursery is empty right then, as `start_cycle` needs --
-and otherwise one `major_slice`, which marks while marking (handing over to
-the sweep when nothing is grey) and sweeps while sweeping.  Each event:
+OCaml 4.14 has no trigger.  After every minor collection (and when the minor
+heap is half full, and when `caml_alloc_shr` has allocated a minor heap's
+worth of words since the last slice) it runs
+`caml_major_collection_slice`, and a slice that finds the collector idle
+starts a cycle, so cycles run back to back.  Each slice does a share `P` of
+a cycle's work, computed from what was allocated in the major heap since the
+last slice (promoted or allocated directly, `caml_allocated_words`) and from
+the size of its heap, `stat_heap_wsz`:
+
+```
+FM = heap * o / (100 + o)       free memory a cycle starts with (o = space_overhead, default 120)
+G  = 2 * FM / 3                 what a cycle may allocate
+P  = max(allocated / G, extra_heap_resources, dependent)
+P += backlog; if P > 0.3 then backlog = P - 0.3, P = 0.3
+spread over the ring of window buckets, less the work credit
+mark slice:  P * MW / 0.4 words,   MW = heap * 100 / (100 + o)
+sweep slice: P * SW / 0.6 words,   SW = heap
+```
+
+so a cycle marks during the first 0.4 * L / MW of P (L live words) and
+sweeps during the next 0.6, and ends after about that share of `G` words
+are allocated.  Its heap starts at `caml_init_heap_wsz` (`h`, 126,976 words)
+and grows only when an allocation finds no room, by the largest of the
+request plus `o` percent, `major_heap_increment` (`i`, 15% of the heap) and
+`Heap_chunk_min` (61,440 words).  So 4.14 collects as often as its heap is
+small, and its heap follows the live set.
+
+**The model of 4.14's heap.**  Our heap has the fixed size
+`MIN_EXPANSION_WORDSIZE` asks for (by default 32M words), often far larger
+than 4.14's would be, so those formulas on our heap's size would collect far
+less often than 4.14 and the count would depend on the size given.  The
+bridge keeps `model_heap` instead, the size 4.14's heap would have: it
+starts at 4.14's initial size and grows by 4.14's steps whenever the words in
+use, as each mode estimates them, exceed it; it never shrinks (4.14 shrinks
+only by compaction) and never exceeds our heap.  Both modes pace on it.
+`VERGC_MAJOR_STATS` prints its final size (`model_heap=`).
+
+**stw.**  A cycle is one `full_gc`, so slices cannot be run.  The bridge sums
+4.14's `P` instead -- one slice at each minor collection, and one for each
+minor heap's worth of direct major allocation -- and runs `full_gc` when the
+sum reaches what a 4.14 cycle takes, `0.4 * L / MW + 0.6 * U / H`, with `L`
+the words the last collection marked, `U` the words in use (below) and `H`
+the model's size: 4.14 marks `P * MW / 0.4` words a slice and sweeps
+`P * H / 0.6`, a free block in one step (`full_paced`).  The collection runs
+at the start of the next minor collection or direct major allocation, where
+the safety net below is checked too (not right after the minor collection
+that completed the sum: native code is then still inside
+`vergc_native_run_minor_collection`, before `young_ptr` is reset).  Before
+`Gc.major` & co. the pending collection is dropped: the program sees the one
+whole collection, as on stock.  For the model's growth, the words
+in use are what 4.14 would hold: `L`, what was allocated since, and the
+garbage the last collection freed, which 4.14 frees only as its sweep reaches
+it (all of it until marking would end, then less in proportion).  As before,
+a full collection also runs when the words promoted or allocated directly
+since the last one would exceed half our heap (`full_room`), so that a
+promotion never finds the heap full; those words are now the minor
+collections' exact count of promoted words, where they used to be each
+minor collection's whole nursery.
+
+**incremental.**  4.14's rhythm: after every minor collection, at Idle,
+`start_cycle` (back to back, as 4.14: `trigger_minor`) -- the nursery is
+empty right then, as `start_cycle` needs -- and otherwise one `major_slice`,
+which marks while marking (handing over to the sweep when nothing is grey)
+and sweeps while sweeping.  A direct major allocation at Idle starts a cycle
+once a minor heap's worth of words has been allocated since the last slice
+(4.14 requests a slice there: `trigger_alloc`), or if the words in use
+(estimated from above) would reach half our heap (a safety net for the fixed
+heap: `trigger_heap`).  Each event:
 
 | event | `alloc_gen.c` |
 |---|---|
-| minor collection (`do_minor_gc`) | mid-cycle, if the heap may not have room for twice the nursery's words, the cycle finished first (below); `minor_collect` at the phase (while marking, promoted copies are black); then at Idle the trigger (`start_major_cycle`: `start_cycle` with the roots the minor collection just rewrote), otherwise a paced slice (`paced_slice(-1)`) |
-| major allocation (`verified_allocate`) | at Idle the trigger (a minor collection and `start_cycle`, `begin_cycle_now`); mid-cycle, once a nursery's worth of words has been allocated since the last slice, a paced slice (4.14 requests one there); then `allocate` at the phase.  On failure: mid-cycle, finish the cycle and retry; then a full collection, finished, and retry; then `NULL` (`Out_of_memory`), as stop-the-world |
-| `Gc.full_major`, `Gc.major`, `Gc.compact` (`runtime/gc_ctrl.c`), `Gc.set` (policy change, through stock `caml_finish_major_cycle`), `caml_trigger_verified_gc` | `do_full_gc`: any cycle in progress finished, then a minor collection, `start_cycle`, and that cycle finished too -- the program sees a finished cycle |
+| minor collection (`do_minor_gc`) | mid-cycle, if the heap may not have room for twice the nursery's words, the cycle finished first (below); `minor_collect` at the phase (while marking, promoted copies are black); then at Idle `start_major_cycle` (`start_cycle` with the roots the minor collection just rewrote), otherwise a paced slice (`paced_slice(-1)`) |
+| major allocation (`verified_allocate`) | at Idle, a cycle starts (a minor collection and `start_cycle`, `begin_cycle_now`) as above; mid-cycle, once a nursery's worth of words has been allocated since the last slice, a paced slice (4.14 requests one there); then `allocate` at the phase.  On failure: mid-cycle, finish the cycle and retry; then a full collection, finished, and retry; then `NULL` (`Out_of_memory`), as stop-the-world |
+| `Gc.full_major`, `Gc.major`, `Gc.compact` (`runtime/gc_ctrl.c`), `Gc.set` (policy change, through stock `caml_finish_major_cycle`), `caml_trigger_verified_gc` | `do_full_gc`: any cycle in progress finished (with cycles back to back, there nearly always is one; it is not counted in `major_collections`, so the program sees one collection, as on stock), then a minor collection, `start_cycle`, and that cycle finished too -- the program sees a finished cycle |
 | `Gc.major_slice n` (`runtime/gc_ctrl.c` calls `verified_major_collection_slice` directly; stock's own test of its phase is always "idle") | at Idle, start a cycle (as 4.14); otherwise a slice with 4.14's reading of `n` (0: the next bucket's work; `n > 0`: the work to free about `n` words) |
-
-**The trigger, at Idle only.**  Incremental mode never starts a cycle in the
-middle of one: mid-cycle, memory pressure makes the slices bigger (the
-pacing), it never finishes the cycle.  A cycle starts when, since the last one
-ended,
-
-- the words allocated in the major heap (promoted, or allocated directly)
-  exceed `caml_percent_free` percent (`space_overhead`, `o`, default 120) of
-  the words in use when it ended, and at least `VERGC_TRIGGER_MIN_WORDS`
-  (default: an eighth of the heap) -- 4.14's steady state, on a heap of fixed
-  size;
-- or the words in use (estimated from above) reach half the heap -- the
-  safety net #39 had, now on the estimate: a cycle needs free memory to run
-  in;
-- or the nursery has allocated as many words as the heap has -- a slow clock
-  standing in for 4.14's back-to-back cycles, so that a program whose garbage
-  all dies young still sees major cycles.
 
 The words in use when a cycle ends are estimated as the words it marked (the
 mark slice counts them: `gc_gen_heap.mark_words`) plus the words allocated
 during the cycle; every block that survives a sweep was marked or allocated
 during the cycle, so the estimate is an upper bound, and so is "that plus
-what was allocated since" for the words in use now.
+what was allocated since" for the words in use now.  The model is fitted to
+it when marking ends, where the words in use peak (nothing is freed before
+the sweep), as 4.14's heap grows to hold them.
 
 ### Pacing (incremental): 4.14's `caml_major_collection_slice`
 
@@ -976,28 +1025,82 @@ what was allocated since" for the words in use now.
 object popped or block rescanned and a word for each field scanned (an object
 larger than what is left is scanned in parts); while sweeping, the words of
 the blocks swept (at most one block over).  `paced_slice` ports
-`runtime/major_gc.c` L938-1109:
+`runtime/major_gc.c` L938-1109 as above, with:
 
-```
-FM = free memory when the cycle started    G = 2 * FM / 3
-P  = words allocated since the last slice / G      (>= caml_extra_heap_resources)
-P += backlog; if P > 0.3 then backlog = P - 0.3, P = 0.3
-spread P over the ring of caml_major_window buckets (the clock: the
-nursery's fill), take the current bucket minus the work credit
-(Gc.major_slice adds to the credit)
-mark slice:  P * MW / 0.4 words        sweep slice:  P * heap / 0.6 words
-```
+- `FM` and `MW` on the model of 4.14's heap, at each slice (as 4.14 reads
+  `stat_heap_wsz` at each slice); `FM` also bounded by what our heap had free
+  when the cycle started (the heap minus the words in use, estimated from
+  above; at least a 64th of the heap);
+- `SW` the model's size too (4.14's is its heap's size).  Both sweeps count
+  a block's words as work, a free block's included, and go at most one block
+  over the budget, so a large free block costs one step and, on a heap with
+  much free space, the sweep ends before `P` sums to 0.6 -- in 4.14 as here
+  (on `tests/no_scan.ml`'s churn loops 4.14's cycles end after about 0.07).
+  With our fixed heap's size as `SW`, the sweep ended several times sooner
+  than 4.14's on a large heap, and cycles ran that much more often;
+- `P` at least `caml_extra_heap_resources` and the `caml_dependent_*` share,
+  as 4.14.
 
-so the cycle ends after about `G` words are allocated: 40% of the time
-marking `MW` words, 60% sweeping the heap.  4.14 takes `FM = heap * o / (100
-+ o)` and `MW = heap * 100 / (100 + o)`, its heap growing to make that true.
-Ours is fixed, so `FM` is also bounded by what is free (from below: the heap
-minus the words in use, estimated from above; at least a 64th of the heap) and
-`MW` is the words in use when the cycle started.  A slice is at least
-`VERGC_SLICE_MIN_WORDS` (default 4096; `VERGC_SWEEP_MIN_WORDS` is an alias)
-words; `VERGC_SLICE_WORDS=n` replaces the computed budget by `n` (testing).
-`VERGC_SWEEP_K`, the incremental sweep's multiplier, is gone: the pacing
-supersedes it.
+A slice whose `P` is 0 does nothing, as in 4.14; otherwise it is at least
+`VERGC_SLICE_MIN_WORDS` (default 1; `VERGC_SWEEP_MIN_WORDS` is an alias)
+words.  `VERGC_SLICE_WORDS=n` replaces the computed budget by `n` (testing).
+`VERGC_SWEEP_K`, the incremental sweep's multiplier, and
+`VERGC_TRIGGER_MIN_WORDS`, the least allocation between two cycles of the
+old idle trigger, are gone.
+
+### What still differs from 4.14
+
+- **The heap's size.**  Ours is fixed; the pacing uses the model of 4.14's,
+  which is grown from our estimate of the words in use, not from failed
+  allocations in 4.14's free list (stw's estimate has no fragmentation; the
+  incremental one is an upper bound).  The model never shrinks (4.14's heap
+  shrinks only by compaction, which this collector does not do).
+- **stw has no slices.**  The collection runs at once where 4.14's cycle
+  would have ended (at the next minor collection); the program never runs
+  with a cycle in progress, so there is no floating garbage, and `L` is the
+  last collection's live set, not this one's.  4.14's slices also go a whole
+  block over their budget, so when slices are tiny (a program that promotes
+  a few words per minor collection) and blocks large, its cycles end far
+  sooner than the sum of `P` says: `tests/no_scan.ml` section 8 needs 4.14
+  about 12M allocation-loop spins for 4 cycles, the incremental mode 18M,
+  stw about 67M (its safety cap was raised from 50M to 200M).  The
+  half-heap safety net (`full_room`) has no 4.14 counterpart.
+- **One slice per minor collection.**  4.14 also runs a slice when the minor
+  heap is half full (`caml_gc_dispatch` at `young_alloc_mid`); the runtime
+  never sets that trigger, so the same work comes in half as many slices.
+- **A requested slice waits.**  `caml_adjust_gc_speed` and `caml_alloc_shr`
+  request a slice (`caml_request_major_slice`); the patched
+  `caml_check_urgent_gc` clears the request, and the bridge takes the
+  slice's `P` (including `caml_extra_heap_resources`) at the next minor
+  collection or direct major allocation that reaches a nursery's worth.
+- **The work units.**  Our mark and sweep budgets count words as described
+  above; 4.14's slices lose what is left of a slice's budget at each phase
+  change in the same way, but where a phase ends inside a slice differs, so
+  per-cycle `P` differs (4.14's own kb cycles range from 0.4 to 0.95).
+- **Custom blocks in the minor heap** do not feed `caml_extra_heap_resources`
+  when promoted (the verified minor collection does not walk
+  `custom_table`; finalisers are not implemented), and nothing is compacted.
+
+**Measured** (native, 3 runs each, medians; heaps as in the allocator
+comparison: minilight 4M words, bdd 9M, binarytrees 16 64M, kb 4M, fft 116M;
+a shared 8-core machine at load 3.5-10, so times are indicative; "before"
+is origin/main 5a44e0ad, "after" this policy):
+
+| program | major collections: stock / stw before / stw after / incr. before / incr. after | time, s: stock / stw before / stw after / incr. before / incr. after |
+|---|---|---|
+| minilight | 7 / 178 / 8 / 9 / 8 | 1.33 / 2.91 / 2.44 / 2.67 / 2.91 |
+| bdd 26 | 10 / 246 / 8 / 14 / 7 | 7.92 / 16.79 / 10.83 / 10.76 / 10.09 |
+| binarytrees 16 | 79 / 58 / 73 / 65 / 92 | 12.95 / 21.63 / 17.68 / 17.57 / 23.79 |
+| kb | 237 / 191 / 195 / 40 / 128 | 3.40 / 4.70 / 4.94 / 5.21 / 7.20 |
+| fft | 29 / 4 / 22 / 3 / 39 | 4.53 / 6.42 / 6.43 / 6.39 / 6.48 |
+
+The model's final size is close to 4.14's heap (e.g. kb 574K words against
+4.14's 575K, fft 25M against 22M).  With 8 major collections, minilight's
+collector time is almost all minor collections (1,601 of them, about 1.0 s,
+stop-the-world), so what remains of its gap to stock is not the major
+trigger.  Incremental, the back-to-back cycles keep the program marking or
+sweeping nearly all the time; on kb and binarytrees that costs 35-40% over
+the old idle-gap trigger.
 
 **Finishing early.**  A cycle in progress is finished at once only where the
 program needs a finished cycle or memory now: a full collection (above), a
@@ -1016,17 +1119,22 @@ finishing only the marking frees nothing.
 than one slice; words marked and swept; cycles finished early by reason
 (`finish_full`, `finish_alloc`, `finish_promote`, and of those
 `finish_mid_mark`); whole collections by reason (`full_explicit`,
-`full_alloc`, `full_other`); cycles started by each trigger; the program's
+`full_alloc`, `full_paced`, `full_room`, `full_other`); cycles started, by
+cause (`trigger_minor`, `trigger_alloc`, `trigger_heap`,
+`trigger_explicit`); the program's
 steps while marking (minor collections, major allocations, barrier calls on
 major slots) and major allocations while sweeping; barrier darkenings (the
 mark stack grew or its overflow flag went up); overflows of the mark stack and
-rescans the slices started.  `vergc-pauses:` gives count/mean/max in
+rescans the slices started; and the model's final size (`model_heap`).
+`vergc-pauses:` gives count/mean/max in
 microseconds of minor collections, `start_cycle`, mark slices, sweep slices,
 finishes and whole collections.
 
 ### Measurements
 
-Wall time (three runs, seconds) and pauses (`VERGC_MAJOR_STATS`, max in
+Measured before the pacing followed 4.14's (above: the old stw trigger at
+half the heap, the old idle trigger), so the cycle counts here are those of
+the old policy.  Wall time (three runs, seconds) and pauses (`VERGC_MAJOR_STATS`, max in
 milliseconds: stop-the-world a whole collection; incremental the largest mark
 slice / sweep slice / `start_cycle`), on a loaded 16-core machine, heaps as in
 `make bench-mark`; no cycle was finished early in any incremental run:
@@ -1105,9 +1213,9 @@ their darkening is the verified barrier's, at the verified collector's phase.
 `tests/run_differential.sh`, which compares their output with stock OCaml's
 byte for byte. With `VERGC_MAJOR=incremental` it runs them under three
 pacings -- the default; small slices, often (`VERGC_SLICE_MIN_WORDS=64
-MINOR_HEAP_WORDS=32768`); a tiny mark stack and back-to-back cycles
-(`VERGC_SLICE_MIN_WORDS=256 VERGC_MARK_STACK=8 VERGC_TRIGGER_MIN_WORDS=0`,
-so root darkening and the barrier overflow the stack and the slices rescan)
+MINOR_HEAP_WORDS=32768`); a tiny mark stack (`VERGC_SLICE_MIN_WORDS=256
+VERGC_MARK_STACK=8`, so root darkening and the barrier overflow the stack and
+the slices rescan; cycles run back to back in every pacing)
 -- and checks, from `VERGC_MAJOR_STATS`, that `incremental_sweep` ran
 mid-sweep and `incremental_mark` mid-mark (marking spanned slices, with minor
 collections, allocations and barrier calls in between).  `incremental_mark`
@@ -1243,8 +1351,13 @@ We collect roots into parallel arrays:
 
 ### Capacity
 
-`MAX_ROOTS = 256K` slots.  If exceeded, the GC fatal-errors.  In
-practice, even binarytrees-14 uses only ~6K roots.
+The root buffers (the program's roots and the remembered slots of one minor
+collection) start at 256K slots and double when full.  They used to be a
+fixed 256K, a fatal error when exceeded: binarytrees-14 uses only ~6K
+roots, but a program that stores young values into many major blocks
+between two minor collections has that many remembered slots
+(`tests/regression/pr7718`: 10,000 arrays of 257 young pointers, about
+2.5M, reached once 4.14's pacing ran a minor collection mid-loop).
 
 ---
 
@@ -1277,22 +1390,28 @@ if (result == 0) → caml_fatal_error("out of memory after collection")
 
 ### Proactive Prevention
 
-To avoid hitting promotion failure (which is fatal), we trigger a
-proactive full GC when cumulative promotions reach 50% of heap size:
+To avoid hitting promotion failure (which is fatal), stop-the-world runs a
+proactive full GC (`full_room`) when the words promoted since the last one,
+plus the nursery (an upper bound on what the next minor collection
+promotes), would exceed half the heap:
 
 ```c
-if (bytes_promoted_since_major + bump > major_size / 2)
-    do_full_gc();
+if (stw_since * 8 + bump > major_size / 2)
+    do_full_gc(&stat_full_room);
 ```
 
-Direct major allocations (`verified_allocate`, blocks larger than
-`Max_young_wosize`) add their size to `bytes_promoted_since_major`, and
-`verified_allocate` checks the same threshold against the requested size
-before allocating. Without this, a heap filled by large blocks that are then
-dropped never triggered a full collection, and the next minor collection
-failed to promote (issue #34). That is stop-the-world's trigger; incremental
-(`VERGC_MAJOR=incremental`) has its own, at Idle only, and the words
-allocated directly feed it and the pacing (see "The Major Mode").
+`stw_since` counts the words each minor collection actually promoted (it
+used to count each nursery's whole size, which made this the trigger of
+almost every major collection: see "The Major Mode").  Direct major
+allocations (`verified_allocate`, blocks larger than `Max_young_wosize`) add
+their size to it, and `verified_allocate` checks the same threshold against
+the requested size before allocating. Without this, a heap filled by large
+blocks that are then dropped never triggered a full collection, and the next
+minor collection failed to promote (issue #34). This is a safety net for a
+heap of fixed size; the collections 4.14's pacing calls for come first
+(`full_paced`).  Incremental (`VERGC_MAJOR=incremental`) has its own safety
+net, at Idle, and the words allocated directly feed it and the pacing (see
+"The Major Mode").
 
 Mid-cycle (`VERGC_MAJOR=incremental`) a minor collection also finishes the
 cycle first when the heap may not hold twice the nursery's words, and a
