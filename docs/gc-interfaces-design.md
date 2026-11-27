@@ -4012,3 +4012,38 @@ the mark (step 4: `handover2` takes `mark_done` after the collection as a
 precondition); the program's young roots stay trusted (the caller passes
 them); the forwarding array is zeroed at every collection (its size, the
 nursery's words); the wrappers are not in the `pages-c` extraction.
+
+**Step 3 (first-fit allocator and sweep): built.**  Two new modules; no
+existing module changed (but `Makefile`, which adds `GC.Impl.FFTop` to
+`ROOT_MODULES`); akhil's code is used as it is.
+- `GC.Spec.Top.CodeFF`: the first-fit configuration after `es`, `good`
+  (the run, L1, and not stopped: no event of this step stops a run);
+  - L5: the model's allocation is `Cursor.alloc_phase` on the heap itself,
+    which `Allocator.allocate` computes (`ffres_eq`); no room changes
+    nothing (`alloc_none`); otherwise the Fill writes only the new block's
+    body (`fill_body`), so the walk and every header stay
+    (`FFFill.body_heads`), and the phase record's caches with them
+    (`alloc_some`); `allocate`'s precondition (the free list ascending while
+    sweeping) is the run's invariant (`alloc_ready`);
+  - L6: a slice of the fused sweep (`SL.sweep_slice` from the derived state)
+    is `SL.slice_count` events `ESweep` (`slice_go`, `slice_cfg`): each step
+    is enabled (the sweep is not done before it) and keeps the derived
+    state (`FusedSweep.Step.sweep_inv_incremental_step`); then `EEnd` when
+    the cursor is done (`end_cfg`);
+  - the start (`init_cfg`), the sweep's start at `zero_addr` with the start's
+    caches (`handover_cfg`), the root events.
+- `GC.Impl.FFTop` (Pulse): `crepf heap fp_ref phase sty es` (the heap, the
+  free list's head and `Allocator`'s phase record, `phase_rel`, represent
+  `xc es`); `initf` (a zeroed heap, then the model's initial block written
+  directly: `Allocator.init_heap` puts a block of `heap_size / 8 - 1` words
+  at `zero_addr`, which is the model's only when `zero_addr` is 0),
+  `allocf` (`Allocator.allocate`, then the Fill), `handoverf`, `slicef`
+  (`FusedSweepCoalesce.sweep_slice_impl` from the record; returns true when
+  the sweep ended, with `EEnd`), ghost `rootsf`, `readf`.
+
+Not yet covered for first-fit: the nursery, the minor collection (step 5,
+U4), the mark and the barrier (step 4); as for pages, code runs reach the
+sweep only after step 4.  For step 4, the start wrapper runs a minor
+collection first (the user's plan): the remembered set is then empty at
+`EStart`, the one event that can break `rem_ok` (above), and the nursery is
+empty, which akhil's `start_cycle` asks for.

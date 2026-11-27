@@ -178,6 +178,7 @@ ROOT_MODULES = \
   mark-and-sweep/spec/GC.Spec.Top.PWHyps.fst \
   mark-and-sweep/impl/GC.Impl.Pages.Top.fst \
   mark-and-sweep/impl/GC.Impl.Pages.TopMinor.fst \
+  mark-and-sweep/impl/GC.Impl.FFTop.fst \
   mark-and-sweep/spec/GC.Spec.Pages.Promote.FollowWitness.fst \
   mark-and-sweep/impl/GC.Impl.Pages.fst \
   generational/impl/GC.Gen.Impl.fsti \
