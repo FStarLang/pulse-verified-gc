@@ -6,8 +6,10 @@
 /// allocator's instance for the phase (`PagesReplay.ptal`: the idle,
 /// marking and sweeping instances), on the page heap `gl h st`, forwarding
 /// the young pointers the model resolves among the roots and remembered
-/// slots (`PagesLive.roots_of`).  It reports `OutOfRoom` exactly when the
-/// promotion refused a live object (`PromoteRun.wit`); otherwise it
+/// slots (`PagesLive.roots_of`).  It reports `OutOfRoom` exactly when an
+/// allocation of the promotion failed (`Promote.Fail.failed`, what the
+/// Pulse promotion's `ok` computes; design doc §18, U7), which makes a
+/// witness of refusal (`PromoteRun.wit`, `PromoteFail`); otherwise it
 /// returns akhil's pointer update of the promoted heap (`Promote.collect`),
 /// the page state, the roots forwarded and the forwarding map read on the
 /// model: the lookup in the list of promotions (young block, copy) the
@@ -58,6 +60,8 @@ module FW = GC.Spec.Pages.Promote.Follow
 module MS = GC.Spec.Pages.MidSweep
 module PA = GC.Spec.Pages.Allocator
 module PMP = GC.Spec.Pages.MarkPhase
+module Fl = GC.Spec.Pages.Promote.Fail
+module PF = GC.Spec.Top.PromoteFail
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
@@ -73,8 +77,7 @@ let pcollect (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) : GTo
   let w = BM.cview cw in
   let roots = LV.roots_of w in
   let cs = P.promote tl ms g0 st.ps roots in
-  if FStar.IndefiniteDescription.strong_excluded_middle (PR.wit tl ms (LV.live w ms) g0 st.ps cs.P.queue)
-  then T.OutOfRoom
+  if Fl.failed tl ms g0 st.ps roots then T.OutOfRoom
   else
     let r = P.collect tl ms g0 st.ps roots in
     let cps = Q.copies cs.P.queue cs.P.fwd (Seq.length cs.P.queue) in
@@ -263,6 +266,30 @@ let run_done (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M
     LV.roots_just wc ms;
     PR.promote_done (ptal ph st) ms (LV.live wc ms) (gl cw.T.cmaj st) st.ps (LV.roots_of wc)
 
+/// **The promotion's outcome, by what happened**, on the collector's world.
+let run_failed (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M.world)
+  : Lemma (requires T.cviews byte_rep cw w /\ T.minor_pre pa ph st cw.T.cmaj w)
+          (ensures (let ms = cw.T.cyng in
+                    let wc = BM.cview cw in
+                    let tl = ptal ph st in
+                    let g0 = gl cw.T.cmaj st in
+                    let roots = LV.roots_of wc in
+                    let cs = P.promote tl ms g0 st.ps roots in
+                    PR.sok tl ms (LV.live wc ms) g0 st.ps cs /\
+                    (Fl.failed tl ms g0 st.ps roots ==> PR.wit tl ms (LV.live wc ms) g0 st.ps cs.P.queue) /\
+                    (~(Fl.failed tl ms g0 st.ps roots) ==>
+                     (forall (i: nat). i < Seq.length roots ==> PR.covered ms cs (Seq.index roots i)) /\
+                     PR.scanned ms cs (Seq.length cs.P.queue))))
+  = let ms = cw.T.cyng in
+    let wc = BM.cview cw in
+    views cw w;
+    ctx_start ph st cw w;
+    young_ok_heq w.M.yng wc.M.yng;
+    yfollow_heq w.M.yng wc.M.yng;
+    LV.live_closed wc ms;
+    LV.roots_just wc ms;
+    PF.promote_failed (ptal ph st) ms (LV.live wc ms) (gl cw.T.cmaj st) st.ps (LV.roots_of wc)
+
 /// ---------------------------------------------------------------------------
 /// OutOfRoom
 /// ---------------------------------------------------------------------------
@@ -341,14 +368,13 @@ let oor_from (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M
             T.alloc_fold byte_rep pa ph cw.T.cmaj st w.M.yng ys == None)
 #pop-options
 
-/// **A refused promotion justifies `OutOfRoom`.**
+/// **A failed promotion justifies `OutOfRoom`.**
 let oor_ok (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M.world)
   : Lemma (requires T.cviews byte_rep cw w /\ T.minor_pre pa ph st cw.T.cmaj w /\
-                    (let wc = BM.cview cw in
-                     let cs = P.promote (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) st.ps (LV.roots_of wc) in
-                     PR.wit (ptal ph st) cw.T.cyng (LV.live wc cw.T.cyng) (gl cw.T.cmaj st) st.ps cs.P.queue))
+                    Fl.failed (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) st.ps (LV.roots_of (BM.cview cw)))
           (ensures T.oor_justified byte_rep pa ph st cw w)
-  = let ms = cw.T.cyng in
+  = run_failed ph st cw w;
+    let ms = cw.T.cyng in
     let wc = BM.cview cw in
     let tl = ptal ph st in
     let g0 = gl cw.T.cmaj st in

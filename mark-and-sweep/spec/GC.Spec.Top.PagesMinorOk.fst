@@ -49,6 +49,8 @@ module D = GC.Spec.Top.PagesDone
 module D2 = GC.Spec.Top.PagesDone2
 module PI = GC.Spec.Pages.Promote.Idle
 module PPI = GC.Spec.Pages.PromoteInst
+module Fl = GC.Spec.Pages.Promote.Fail
+
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
@@ -258,8 +260,7 @@ let done_post (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: 
 
 let dpre_intro (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M.world)
   : Lemma (requires T.cviews byte_rep cw w /\ T.minor_pre pa ph st cw.T.cmaj w /\
-                    ~(PR.wit (ptal ph st) cw.T.cyng (LV.live (BM.cview cw) cw.T.cyng) (gl cw.T.cmaj st) st.ps
-                        (D.cs_of ph st cw).P.queue))
+                    ~(Fl.failed (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) st.ps (LV.roots_of (BM.cview cw))))
           (ensures D.dpre ph st cw w)
   = reveal_opaque (`%D.dpre) (D.dpre ph st cw w)
 
@@ -273,9 +274,7 @@ let minor_m_ok (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w:
                                  | T.Done hc' st' roots' fwd ->
                                    exists (h': M.mheap). byte_rep.R.repr h' hc' /\
                                      T.minor_post_done pa ph st cw.T.cmaj w hc' st' roots' fwd h'))
-      = if FStar.IndefiniteDescription.strong_excluded_middle
-             (PR.wit (ptal ph st) cw.T.cyng (LV.live (BM.cview cw) cw.T.cyng) (gl cw.T.cmaj st) st.ps
-                (D.cs_of ph st cw).P.queue)
+      = if Fl.failed (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) st.ps (LV.roots_of (BM.cview cw))
         then PM.oor_ok ph st cw w
         else begin
           dpre_intro ph st cw w;

@@ -249,6 +249,26 @@ let fold_inner (ph: T.phase pprog) (h: heap) (st: pst) (k j: nat) (y: M.mheap) (
     fold_unfold ph h st y o tl h2
 #pop-options
 
+/// The step, once the contract's model is chosen: some heap represents the
+/// Fill.
+#push-options "--z3rlimit 40"
+let fold_mid (ph: T.phase pprog) (h: heap) (st: pst) (k j: nat) (y: M.mheap) (o: nat) (tl: list nat)
+             (m' m'': M.mheap)
+  : Lemma (requires fs ph h st k j /\ ynice k y /\ M.is_block y o /\
+                    M.fields_of y o == [M.field y o 0] /\ storable_w (M.field y o 0) /\
+                    T.Ok? (fr ph h st) /\ PWP.kinds_ok (fst' ph h st).ps (j + 1) /\
+                    brepr m' (fh ph h st) /\ fpost ph h st m' /\
+                    T.some_model byte_rep (fh ph h st) == Some m'' /\ brepr m'' (fh ph h st) /\
+                    M.is_block m'' (T.Ok?._0 (fr ph h st)) /\ M.wz_of m'' (T.Ok?._0 (fr ph h st)) == 1)
+          (ensures exists (h2: heap) (st2: pst). fs ph h2 st2 k (j + 1) /\
+                     T.alloc_fold byte_rep pa ph h st y (o :: tl) == T.alloc_fold byte_rep pa ph h2 st2 y tl)
+  = let v = M.field y o 0 in
+    let c = T.Ok?._0 (fr ph h st) in
+    fill_heap (fh ph h st) m'' c v;
+    eliminate exists (h3: heap). brepr (M.fill m'' c [v]) h3
+    with fold_inner ph h st k j y o tl m' m'' h3
+#pop-options
+
 /// **One step**: the fold moves on to a state that again has what it needs.
 #push-options "--z3rlimit 40"
 let fold_one (ph: T.phase pprog) (h: heap) (st: pst) (k j: nat) (y: M.mheap) (o: nat) (tl: list nat)
@@ -267,9 +287,7 @@ let fold_one (ph: T.phase pprog) (h: heap) (st: pst) (k j: nat) (y: M.mheap) (o:
     with begin
       post_k ph h st k m';
       R.heq_sym m' (cabs h'); R.heq_trans m'' (cabs h') m';
-      fill_heap h' m'' c v;
-      eliminate exists (h3: heap). brepr (M.fill m'' c [v]) h3
-      with fold_inner ph h st k j y o tl m' m'' h3
+      fold_mid ph h st k j y o tl m' m''
     end
 #pop-options
 

@@ -3946,3 +3946,69 @@ Not yet covered: the mark and the barrier (step 4), so code runs reach
 nursery (step 2, U2); the budgeted `sweep_slice` as several events (a
 loop of `sweep_step_top` does the same work); the wrappers are not in the
 `pages-c` extraction.
+
+**Step 2 (pages minor collection, with the nursery and the remembered
+set): built.**  Decisions taken on the way (the user's): U3 as planned; U7,
+a new gap, by "real failure"; the remembered set's soundness by a minor
+collection inside the hand-over.
+
+- *U3, the barrier* (`ByteBarrier.remember`): a slot is remembered once, at
+  the back of the list, the order of C's `caml_ref_table`.  `barrier_ok` is
+  reproved (`remember_ok`); the contract only asks for membership.
+- *U7, a new gap: which promotions report `OutOfRoom`.*  `pcollect`
+  reported `OutOfRoom` when `PromoteRun.wit` held: some live object would
+  fail after some prefix of the queue, a counterfactual.  A promotion can
+  succeed while `wit` holds (a large size class full after `k` promotions,
+  the actual `k`-th promotion small), so the model stopped where the code
+  went on.  Now `pcollect` reports `OutOfRoom` exactly when an allocation
+  of the actual promotion failed (`Promote.Fail.failed`, the same loop with
+  a flag).  A failure is a witness (`PromoteFail.promote_failed`, from
+  `fn_failure`), so `oor_justified` still holds; without one, every root and
+  scanned field is covered.  `PagesMinor`, `PagesDone`, `PagesMinorOk` are
+  reproved; the pages witness runs show `Done` through the contract and are
+  unchanged.  First-fit's `FFMinor` keeps `wit` until step 5.
+- *U5*: the Pulse promotion's `ok` is exactly `not failed`
+  (`Cheney.promote_all`, `Minor.minor_collect`): every forwarding step's
+  flag is the model's (`Fail.one_*`).
+- *Two preconditions the model's runs do not give* (no specification
+  change; the Pulse code now asks only what it follows, as §12 did for the
+  model):
+  - akhil's `minor_infix_wf` (through `Loop.cpre`): the promotion's `Sim`,
+    `TwoPass`, `Forward`, `Cheney` and `Minor` now start from `Loop.cpre_w`
+    and ask `follow_ok` at each address they forward;
+  - akhil's `minor_guards_complete` (his "trust assumption on the
+    mutator"): a field can hold a word that reads as a header, so it fails
+    on the model's nurseries.  The forwarding step now asks the guards only
+    at the addresses it forwards (`Promote.Guard`: `fields_gd`, `roots_gd`);
+    akhil's condition gives them (`gd_of_complete`), and so do the code's
+    runs, where every young pointer the model resolves is an object or an
+    infix address (`CodeGuard`).
+- *The remembered set as a table* (`CodeMinor`): `tbl_ok` (the table's
+  first `n` words are the remembered slots' field addresses, in order) and
+  `rem_ok` (every remembered slot is a scannable field of a kept block,
+  `Run.kept`).  `rem_ok` is kept by every event the code performs, through
+  the run's exported clause (1a) (`CodeRun.step_facts`); the Fill adds the
+  new block's young fields (`alloc_rem`, `ynew`).  From them the Pulse
+  collection's `ref_table_sound_with` and `ref_table_covers_with` for the
+  phase's allocator (`tbl_sound`, `tbl_covers`), and the remembered slots'
+  young words, read through the table (`yrem_tbl_ok`, `roots_code`).  With
+  `kept`, the one event that can break `rem_ok` is `EStart` (a block
+  remembered while idle and unreachable at the start is no longer kept);
+  step 4 must start a cycle with the remembered set empty.  The minor
+  collection before the hand-over (the user's decision) makes it empty when
+  the sweep starts.
+- *Glue* (`GC.Impl.Pages.TopMinor`): `crep2` (step 1's `crep`, the nursery
+  `is_minor` as the configuration's, the table, `rem_ok`, not stopped) and
+  wrappers `init2`, `alloc2` (the Fill's young fields appended to the
+  table), `yalloc2` (`EYoungAlloc`, a bump allocation; no event when there is
+  no room), `minor2` (`EMinor`: the roots are the program's young roots,
+  given by the caller, then the table's young words; `ok == false` stops
+  the run, `stopped2`), `handover2` (`EMinor` then `EHandover`), `sweep2`,
+  `roots2`, `read2`.  The roots buffer is a `Pulse.Lib.Vec` (sound
+  allocation; `Array.alloc` is deprecated as unsound).
+
+Not yet covered: `EWrite` (the barrier, step 4) and young writes and reads;
+the mark (step 4: `handover2` takes `mark_done` after the collection as a
+precondition); the program's young roots stay trusted (the caller passes
+them); the forwarding array is zeroed at every collection (its size, the
+nursery's words); the wrappers are not in the `pages-c` extraction.

@@ -26,6 +26,7 @@ module MS = GC.Spec.Pages.MidSweep
 module PI = GC.Spec.Pages.PromoteInst
 module PId = GC.Spec.Pages.Promote.Idle
 module CSim = GC.Gen.Cheney.Sim
+module FW = GC.Spec.Pages.Promote.Follow
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
@@ -113,11 +114,11 @@ let qinv (minor: minor_state) (cs: gstate pstate) : prop =
 
 [@@"opaque_to_smt"]
 let sim (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate) : prop =
-  L.ctx a minor g0 /\ L.linv a minor g0 cs /\ qinv minor cs /\ fwd_injective minor cs.fwd
+  L.ctx_w a minor g0 /\ L.linv a minor g0 cs /\ L.finv minor cs /\ qinv minor cs /\ fwd_injective minor cs.fwd
 
 let sim_eq (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate)
   : Lemma (sim a minor g0 cs <==>
-           (L.ctx a minor g0 /\ L.linv a minor g0 cs /\ qinv minor cs /\ fwd_injective minor cs.fwd))
+           (L.ctx_w a minor g0 /\ L.linv a minor g0 cs /\ L.finv minor cs /\ qinv minor cs /\ fwd_injective minor cs.fwd))
   = reveal_opaque (`%sim) (sim a minor g0 cs)
 
 /// A nursery object is not infix.
@@ -127,7 +128,7 @@ let mem_not_infix (minor: minor_state) (x: U64.t)
   = minor_objects_not_infix minor x
 
 #push-options "--z3rlimit 30"
-let sim_init a minor g0 st0
+let sim_init a minor g0 st0 roots
   = sim_eq a minor g0 (init g0 st0);
     contract_wf a g0 st0;
     let cs = init g0 st0 in
@@ -229,13 +230,13 @@ let sim_forward_normal (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gsta
                    (forall (m: U64.t). m <> addr ==> (forward_normal a minor cs addr).fwd m == cs.fwd m))
   = sim_eq a minor g0 cs;
     sim_eq a minor g0 (forward_normal a minor cs addr);
-    L.forward_normal_keeps a minor g0 cs addr;
+    L.forward_normal_keeps_w a minor g0 cs addr;
     if not (Seq.mem addr (minor_objects minor)) || cs.fwd addr <> 0UL then ()
     else begin
       let wz = minor_wosize minor addr in
       if wz = 0 then ()
       else begin
-        L.promote_step a minor g0 cs.major cs.st addr;
+        L.promote_step_w a minor g0 cs.major cs.st addr;
         let (g2, s2, o) = promote_object a minor cs.major addr cs.st wz in
         if o = 0UL then ()
         else begin
@@ -246,26 +247,32 @@ let sim_forward_normal (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gsta
     end
 #pop-options
 
+/// The infix entry, at a value in the heap.
+let infix_ext (minor: minor_state) (cs': gstate pstate) (addr: U64.t) (n: nat)
+  : Lemma (requires minor_wf minor /\ qinv minor cs' /\ fwd_injective minor cs'.fwd /\
+                    is_infix_in_minor minor addr /\ n < heap_size)
+          (ensures n < pow2 64 /\
+                   qinv minor ({ cs' with fwd = extend_forwarding cs'.fwd addr (U64.uint_to_t n) }) /\
+                   fwd_injective minor (extend_forwarding cs'.fwd addr (U64.uint_to_t n)))
+  = qinv_infix minor cs' addr (U64.uint_to_t n);
+    inj_infix minor cs'.fwd addr (U64.uint_to_t n)
+
 #push-options "--z3rlimit 40"
 let sim_forward_one a minor g0 cs addr
   = sim_eq a minor g0 cs;
     sim_eq a minor g0 (forward_one a minor cs addr);
-    L.forward_one_keeps a minor g0 cs addr;
+    L.forward_one_keeps_w a minor g0 cs addr;
     if cs.fwd addr <> 0UL then ()
     else if is_infix_in_minor minor addr then begin
       let parent = infix_parent minor addr in
-      L.parent_facts minor addr;
+      FW.parent_facts_at minor addr;
       sim_forward_normal a minor g0 cs parent;
       let cs' = forward_normal a minor cs parent in
       sim_eq a minor g0 cs';
       if cs'.fwd parent <> 0UL &&
          U64.v addr >= U64.v parent &&
          U64.v (cs'.fwd parent) + (U64.v addr - U64.v parent) < heap_size
-      then begin
-        let v = U64.uint_to_t (U64.v (cs'.fwd parent) + (U64.v addr - U64.v parent)) in
-        qinv_infix minor cs' addr v;
-        inj_infix minor cs'.fwd addr v
-      end
+      then infix_ext minor cs' addr (U64.v (cs'.fwd parent) + (U64.v addr - U64.v parent))
     end
     else sim_forward_normal a minor g0 cs addr
 #pop-options
@@ -326,15 +333,14 @@ let step_normal_oom a minor cs g st addr g' st'
 /// The offset of an infix address in its closure, and the room for it.
 #push-options "--z3rlimit 30"
 let infix_offset (minor: minor_state) (addr: U64.t) (f: nat)
-  : Lemma (requires L.mpre minor /\ is_infix_in_minor minor addr /\
+  : Lemma (requires minor_wf minor /\ FW.infix_at minor addr /\ is_infix_in_minor minor addr /\
                     f + minor_wosize minor (infix_parent minor addr) * 8 <= heap_size)
           (ensures (let p = infix_parent minor addr in
                     U64.v addr >= U64.v p /\ f + (U64.v addr - U64.v p) < heap_size /\
                     Seq.mem p (minor_objects minor) /\ ~(is_infix_in_minor minor p) /\ p <> addr /\
                     U64.v p >= 8 /\ U64.v p < minor_heap_size /\ U64.v p % 8 == 0))
-  = infix_parent_value minor addr;
-    infix_parent_in_minor_objects minor addr;
-    L.parent_facts minor addr;
+  = FW.infix_parent_value_at minor addr;
+    FW.parent_facts_at minor addr;
     minor_objects_valid minor (infix_parent minor addr)
 #pop-options
 
@@ -342,7 +348,7 @@ let infix_offset (minor: minor_state) (addr: U64.t) (f: nat)
 let step_infix_fwd a minor g0 cs g st farr q bk addr
   = sim_eq a minor g0 cs;
     let p = infix_parent minor addr in
-    infix_parent_in_minor_objects minor addr;
+    FW.parent_facts_at minor addr;
     sim_room a minor g0 cs p;
     infix_offset minor addr (U64.v (cs.fwd p));
     assert (forward_normal a minor cs p == cs);
@@ -356,7 +362,7 @@ let step_infix_fwd a minor g0 cs g st farr q bk addr
 #push-options "--z3rlimit 30"
 let infix_new_eq (a: tal pstate) (minor: minor_state) (cs: gstate pstate) (addr: U64.t)
                  (g': heap) (st': pstate) (o: U64.t)
-  : Lemma (requires L.mpre minor /\ contract a /\ a.inv cs.major cs.st /\
+  : Lemma (requires minor_wf minor /\ FW.infix_at minor addr /\ contract a /\ a.inv cs.major cs.st /\
                     cs.fwd addr == 0UL /\ is_infix_in_minor minor addr /\
                     (let p = infix_parent minor addr in
                      minor_wosize minor p > 0 /\ cs.fwd p == 0UL /\
@@ -370,7 +376,7 @@ let infix_new_eq (a: tal pstate) (minor: minor_state) (cs: gstate pstate) (addr:
                      forward_one a minor cs addr ==
                      { cs1 with fwd = extend_forwarding cs1.fwd addr (U64.uint_to_t v) })))
   = let p = infix_parent minor addr in
-    infix_parent_in_minor_objects minor addr;
+    FW.parent_facts_at minor addr;
     L.tag_not_infix minor p;
     alloc_room a cs.major cs.st (minor_wosize minor p) (promoted_tag minor p);
     infix_offset minor addr (U64.v o);
@@ -399,7 +405,7 @@ let step_infix_new a minor g0 cs g st farr q bk addr g' st' o
 let step_infix_oom a minor g0 cs g st addr g' st'
   = sim_eq a minor g0 cs;
     let p = infix_parent minor addr in
-    infix_parent_in_minor_objects minor addr;
+    FW.parent_facts_at minor addr;
     minor_objects_body_bound minor p;
     assert (forward_normal a minor cs p == cs)
 #pop-options
@@ -417,12 +423,14 @@ let scan_step a minor cs sc fuel = ()
 let scan_base a minor cs sc fuel = ()
 
 let rec sim_fields_rec (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate) (p: U64.t) (i wz: nat)
-  : Lemma (requires sim a minor g0 cs)
+  : Lemma (requires sim a minor g0 cs /\ Seq.mem p (minor_objects minor) /\ wz <= minor_scan_wosize minor p)
           (ensures sim a minor g0 (forward_fields a minor cs p i wz))
           (decreases (if i >= wz then 0 else wz - i))
   = if i >= wz then ()
     else begin
       let fv = to_minor_offset (minor_read_field minor p i) in
+      sim_eq a minor g0 cs;
+      FW.fields_follow_elim minor p i;
       sim_forward_one a minor g0 cs fv;
       sim_fields_rec a minor g0 (forward_one a minor cs fv) p (i + 1) wz
     end
@@ -430,7 +438,7 @@ let rec sim_fields_rec (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gsta
 let sim_fields a minor g0 cs p i wz = sim_fields_rec a minor g0 cs p i wz
 
 let rec sim_roots (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate) (roots: seq U64.t) (i: nat)
-  : Lemma (requires sim a minor g0 cs)
+  : Lemma (requires sim a minor g0 cs /\ FW.roots_follow minor roots)
           (ensures sim a minor g0 (forward_roots a minor cs roots i))
           (decreases (if i >= Seq.length roots then 0 else Seq.length roots - i))
   = if i >= Seq.length roots then ()
@@ -449,6 +457,7 @@ let rec sim_scan (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pst
       let fuel' : nat = fuel - 1 in
       let obj = Seq.index cs.queue sc in
       let cs' = forward_fields a minor cs obj 0 (minor_scan_wosize minor obj) in
+      sim_eq a minor g0 cs;
       sim_fields_rec a minor g0 cs obj 0 (minor_scan_wosize minor obj);
       assert (scan a minor cs sc fuel == scan a minor cs' (sc + 1) fuel');
       sim_scan a minor g0 cs' (sc + 1) fuel'
@@ -456,7 +465,7 @@ let rec sim_scan (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pst
 #pop-options
 
 let promote_sim a minor g0 st0 roots
-  = sim_init a minor g0 st0;
+  = sim_init a minor g0 st0 roots;
     let cs1 = forward_roots a minor (init g0 st0) roots 0 in
     sim_roots a minor g0 (init g0 st0) roots 0;
     sim_scan a minor g0 cs1 0 (Seq.length (minor_objects minor))

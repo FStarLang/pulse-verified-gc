@@ -20,8 +20,9 @@
 ///   * `minor_collect_marking`: `Promote.Mark.mcollect`, from `mpre_mark`;
 ///   * `minor_collect_sweeping`: `Promote.Sweep.scollect`, from `spre`.
 ///
-/// `ok` is false when an allocation failed; the collection is then still
-/// the model's, which skips that object.
+/// `ok` is false exactly when an allocation failed (`Promote.Fail.failed`);
+/// the collection is then still the model's, which skips that object.  It
+/// reads only what it follows (`Loop.cpre_w`, design doc §12).
 
 module GC.Impl.Pages.Minor
 
@@ -59,6 +60,8 @@ module PId = GC.Spec.Pages.Promote.Idle
 module PM = GC.Spec.Pages.Promote.Mark
 module PS = GC.Spec.Pages.Promote.Sweep
 module MS = GC.Spec.Pages.MidSweep
+module Fl = GC.Spec.Pages.Promote.Fail
+module Gd = GC.Spec.Pages.Promote.Guard
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
@@ -78,7 +81,8 @@ fn minor_collect (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: b
   requires is_minor minor 'md 'mb ** is_heap major 'g ** pages_st t 'st **
            pts_to roots 'rs ** pts_to fwd_arr 'farr ** pts_to queue 'qv ** pts_to slots 'sl **
            pure (Sim.at_phase a ph /\ marking == I.Marking? ph /\
-                 L.cpre a (mst 'md 'mb) 'g 'st /\ minor_guards_complete (mst 'md 'mb) /\
+                 L.cpre_w a (mst 'md 'mb) 'g 'st 'rs /\
+                 Gd.fields_gd (mst 'md 'mb) /\ Gd.roots_gd (mst 'md 'mb) 'rs /\
                  Seq.length 'farr == fwd_array_size /\
                  (forall (i: nat). i < fwd_array_size ==> Seq.index 'farr i == 0UL) /\
                  Seq.length 'qv == queue_size /\ SZ.v nroots == Seq.length 'rs /\
@@ -89,6 +93,7 @@ fn minor_collect (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: b
           is_minor minor d' b' ** is_heap major g' ** pages_st t st' **
           pts_to roots rs' ** pts_to fwd_arr farr' ** pts_to queue qv' ** pts_to slots 'sl **
           pure (let r = collect a (mst 'md 'mb) 'g 'st 'rs in
+                ok == not (Fl.failed a (mst 'md 'mb) 'g 'st 'rs) /\
                 g' == r.rmajor /\ st' == r.rst /\ mst d' b' == r.rminor /\ rs' == r.rroots)
 {
   let ok = promote_all minor major t marking fwd_arr queue roots nroots #a #ph;
@@ -129,7 +134,9 @@ fn minor_collect_idle (minor: minor_heap_t) (major: heap_t) (t: pstate_t)
   Sim.idle_at ();
   PId.idle_contract ();
   GenInv.minor_heap_shape_elim (mst 'md 'mb);
+  Gd.gd_of_complete (mst 'md 'mb) 'rs;
   contract_wf PId.idle_tal 'g 'st;
+  L.cpre_weaken PId.idle_tal (mst 'md 'mb) 'g 'st 'rs;
   minor_collect minor major t false roots nroots fwd_arr queue slots nslots #PId.idle_tal #I.Idle
 }
 #pop-options
@@ -156,6 +163,8 @@ fn minor_collect_marking (minor: minor_heap_t) (major: heap_t) (t: pstate_t)
   Sim.mark_at ();
   PM.mpre_facts (mst 'md 'mb) 'g 'st;
   GenInv.minor_heap_shape_elim (mst 'md 'mb);
+  Gd.gd_of_complete (mst 'md 'mb) 'rs;
+  L.cpre_weaken PI.mark_tal (mst 'md 'mb) 'g 'st 'rs;
   minor_collect minor major t true roots nroots fwd_arr queue slots nslots #PI.mark_tal #I.Marking
 }
 #pop-options
@@ -182,7 +191,9 @@ fn minor_collect_sweeping (minor: minor_heap_t) (major: heap_t) (t: pstate_t)
   Sim.sw_at (reveal 'st).pm;
   PI.sw_contract (reveal 'st).pm;
   GenInv.minor_heap_shape_elim (mst 'md 'mb);
+  Gd.gd_of_complete (mst 'md 'mb) 'rs;
   contract_wf (PI.sw_tal (reveal 'st).pm) 'g 'st;
+  L.cpre_weaken (PI.sw_tal (reveal 'st).pm) (mst 'md 'mb) 'g 'st 'rs;
   minor_collect minor major t false roots nroots fwd_arr queue slots nslots
     #(PI.sw_tal (reveal 'st).pm) #I.Sweeping
 }

@@ -57,6 +57,7 @@ module IA = GC.Impl.Pages.AllocInc
 module IS = GC.Impl.Pages.Sweep
 module ISI = GC.Impl.Pages.SweepInc
 module II = GC.Impl.Pages.Init
+module AT = GC.Spec.Pages.AllocTag
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
@@ -174,7 +175,10 @@ fn alloc_top (heap: heap_t) (t: pstate_t) (pr: R.ref U8.t) (cr: R.ref U64.t)
                  CR.allowed CP.pc sty (CP.xc es) (EAlloc (U64.v wz) (U64.v tag) vs))
   returns o: U64.t
   ensures crep heap t pr cr sty (L.append es [EAlloc (U64.v wz) (U64.v tag) vs]) ** A.pts_to fs #p ws **
-          pure (o == 0UL ==> CP.xc (L.append es [EAlloc (U64.v wz) (U64.v tag) vs]) == CP.xc es)
+          pure (o == 0UL ==> CP.xc (L.append es [EAlloc (U64.v wz) (U64.v tag) vs]) == CP.xc es) **
+          pure (let x = CP.xc es in
+                let (_, _, o') = AT.alloc_tag (PAl.iph x.ph) (CP.hof x) (CP.sof x).ps (U64.v wz) (PAl.tg (U64.v tag)) in
+                o == o')
 {
   unfold crep;
   with x c. assert (is_heap heap (CP.hof x) ** R.pts_to cr c);
@@ -214,7 +218,9 @@ fn handover_top (heap: heap_t) (t: pstate_t) (pr: R.ref U8.t) (cr: R.ref U64.t)
   (#sty: erased style) (#es: erased (list event))
   requires crep heap t pr cr sty es **
            pure ((CP.xc es).stopped == false /\ T.Marking? (CP.xc es).ph /\ T.mark_done (mj (CP.xc es)))
-  ensures crep heap t pr cr sty (L.append es [EHandover])
+  ensures crep heap t pr cr sty (L.append es [EHandover]) **
+          pure (CR.allowed CP.pc sty (CP.xc es) EHandover /\
+                CP.xc (L.append es [EHandover]) == step CP.pc (CP.xc es) EHandover)
 {
   unfold crep;
   with x c. assert (is_heap heap (CP.hof x) ** R.pts_to cr c);
@@ -281,7 +287,10 @@ fn sweep_step_top (heap: heap_t) (t: pstate_t) (pr: R.ref U8.t) (cr: R.ref U64.t
   (#sty: erased style) (#es: erased (list event))
   requires crep heap t pr cr sty es ** pure ((CP.xc es).stopped == false /\ T.Sweeping? (CP.xc es).ph)
   returns more: bool
-  ensures crep heap t pr cr sty (L.append es [if more then ESweep else EEnd])
+  ensures crep heap t pr cr sty (L.append es [if more then ESweep else EEnd]) **
+          pure (CR.allowed CP.pc sty (CP.xc es) (if more then ESweep else EEnd) /\
+                CP.xc (L.append es [if more then ESweep else EEnd]) ==
+                step CP.pc (CP.xc es) (if more then ESweep else EEnd))
 {
   unfold crep;
   with x c. assert (is_heap heap (CP.hof x) ** R.pts_to cr c);
@@ -323,7 +332,8 @@ fn sweep_step_top (heap: heap_t) (t: pstate_t) (pr: R.ref U8.t) (cr: R.ref U64.t
 ghost fn roots_top (heap: heap_t) (t: pstate_t) (pr: R.ref U8.t) (cr: R.ref U64.t)
   (#sty: erased style) (#es: erased (list event)) (rs: list M.value)
   requires crep heap t pr cr sty es ** pure (CR.allowed CP.pc sty (CP.xc es) (ERoots rs))
-  ensures crep heap t pr cr sty (L.append es [ERoots rs])
+  ensures crep heap t pr cr sty (L.append es [ERoots rs]) **
+          pure (CP.xc (L.append es [ERoots rs]) == step CP.pc (CP.xc es) (ERoots rs))
 {
   unfold crep;
   with x c. assert (is_heap heap (CP.hof x) ** R.pts_to cr c);
@@ -339,7 +349,8 @@ ghost fn roots_top (heap: heap_t) (t: pstate_t) (pr: R.ref U8.t) (cr: R.ref U64.
 ghost fn read_top (heap: heap_t) (t: pstate_t) (pr: R.ref U8.t) (cr: R.ref U64.t)
   (#sty: erased style) (#es: erased (list event)) (o i: nat)
   requires crep heap t pr cr sty es ** pure (CR.allowed CP.pc sty (CP.xc es) (ERead (M.Major o) i))
-  ensures crep heap t pr cr sty (L.append es [ERead (M.Major o) i])
+  ensures crep heap t pr cr sty (L.append es [ERead (M.Major o) i]) **
+          pure (CP.xc (L.append es [ERead (M.Major o) i]) == step CP.pc (CP.xc es) (ERead (M.Major o) i))
 {
   unfold crep;
   with x c. assert (is_heap heap (CP.hof x) ** R.pts_to cr c);
@@ -350,4 +361,23 @@ ghost fn read_top (heap: heap_t) (t: pstate_t) (pr: R.ref U8.t) (cr: R.ref U64.t
   rewrite (R.pts_to pr (CP.phase_code x.ph))
        as (R.pts_to pr (CP.phase_code (CP.xc (L.append es [ERead (M.Major o) i])).ph));
   fold (crep heap t pr cr sty (L.append es [ERead (M.Major o) i]))
+}
+
+/// An event that leaves the major heap, the page state and the phase (the
+/// nursery's), once the longer run is known good.
+ghost fn young_top (heap: heap_t) (t: pstate_t) (pr: R.ref U8.t) (cr: R.ref U64.t)
+  (#sty: erased style) (#es: erased (list event)) (e: event)
+  requires crep heap t pr cr sty es **
+           pure (CP.good sty (L.append es [e]) /\
+                 CP.hof (CP.xc (L.append es [e])) == CP.hof (CP.xc es) /\
+                 CP.sof (CP.xc (L.append es [e])) == CP.sof (CP.xc es) /\
+                 (CP.xc (L.append es [e])).ph == (CP.xc es).ph)
+  ensures crep heap t pr cr sty (L.append es [e])
+{
+  unfold crep;
+  with x c. assert (is_heap heap (CP.hof x) ** R.pts_to cr c);
+  rewrite (is_heap heap (CP.hof x)) as (is_heap heap (CP.hof (CP.xc (L.append es [e]))));
+  rewrite (pages_st t (CP.sof x).ps) as (pages_st t (CP.sof (CP.xc (L.append es [e]))).ps);
+  rewrite (R.pts_to pr (CP.phase_code x.ph)) as (R.pts_to pr (CP.phase_code (CP.xc (L.append es [e])).ph));
+  fold (crep heap t pr cr sty (L.append es [e]))
 }

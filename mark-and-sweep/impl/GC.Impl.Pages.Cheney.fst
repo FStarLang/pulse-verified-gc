@@ -41,6 +41,9 @@ module I = GC.Spec.AllocIface
 module Sim = GC.Spec.Pages.Promote.Sim
 module CSim = GC.Gen.Cheney.Sim
 module L = GC.Spec.Pages.Promote.Loop
+module FW = GC.Spec.Pages.Promote.Follow
+module Fl = GC.Spec.Pages.Promote.Fail
+module Gd = GC.Spec.Pages.Promote.Guard
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
@@ -61,11 +64,13 @@ fn fwd_fields (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool
   (#a: erased (tal pstate)) (#ph: erased I.phase) (#g0: erased heap) (#cs: erased (gstate pstate))
   requires is_minor minor 'md 'mb ** cst major t fwd_arr queue back cs ** R.pts_to oom_ref 'oom **
            pure (pre a ph marking (mst 'md 'mb) g0 cs /\
-                 U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\ U64.v obj + U64.v wz * 8 <= minor_heap_size)
+                 U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\ U64.v obj + U64.v wz * 8 <= minor_heap_size /\
+                 Seq.mem obj (minor_objects (mst 'md 'mb)) /\ U64.v wz == minor_scan_wosize (mst 'md 'mb) obj)
   ensures exists* oom'. is_minor minor 'md 'mb **
           cst major t fwd_arr queue back (forward_fields a (mst 'md 'mb) cs obj 0 (U64.v wz)) **
           R.pts_to oom_ref oom' **
-          pure (pre a ph marking (mst 'md 'mb) g0 (forward_fields a (mst 'md 'mb) cs obj 0 (U64.v wz)))
+          pure (pre a ph marking (mst 'md 'mb) g0 (forward_fields a (mst 'md 'mb) cs obj 0 (U64.v wz)) /\
+                oom' == ('oom || Fl.fails_fields a (mst 'md 'mb) cs obj 0 (U64.v wz)))
 {
   let mut i = 0UL;
   while (U64.lt !i wz)
@@ -74,21 +79,28 @@ fn fwd_fields (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool
       R.pts_to oom_ref oom_i **
       pure (U64.v iv <= U64.v wz /\ pre a ph marking (mst 'md 'mb) g0 cs_i /\
             forward_fields a (mst 'md 'mb) cs_i obj (U64.v iv) (U64.v wz) ==
-            forward_fields a (mst 'md 'mb) cs obj 0 (U64.v wz))
+            forward_fields a (mst 'md 'mb) cs obj 0 (U64.v wz) /\
+            (oom_i || Fl.fails_fields a (mst 'md 'mb) cs_i obj (U64.v iv) (U64.v wz)) ==
+            ('oom || Fl.fails_fields a (mst 'md 'mb) cs obj 0 (U64.v wz)))
     decreases (U64.v wz - U64.v !i)
   {
     let iv = !i;
     with cs_i. assert (cst major t fwd_arr queue back cs_i);
     field_addr_ok (U64.v obj) (U64.v wz) (U64.v iv);
     Sim.fields_step a (mst 'md 'mb) cs_i obj (U64.v iv) (U64.v wz);
+    Fl.fields_step a (mst 'md 'mb) cs_i obj (U64.v iv) (U64.v wz);
     let raw = minor_read minor (U64.add obj (U64.mul iv 8UL));
     CSim.minor_read_eq_field (mst 'md 'mb) obj (U64.v iv);
+    Sim.sim_facts a (mst 'md 'mb) g0 cs_i;
+    FW.fields_follow_elim (mst 'md 'mb) obj (U64.v iv);
+    Gd.fields_gd_elim (mst 'md 'mb) obj (U64.v iv);
     let child = to_minor_offset_u64 raw;
     forward_if_minor minor major t marking fwd_arr queue back oom_ref child #a #ph #g0 #cs_i;
     i := U64.add iv 1UL
   };
   with cs_e. assert (cst major t fwd_arr queue back cs_e);
   Sim.fields_base a (mst 'md 'mb) cs_e obj (U64.v wz) (U64.v wz);
+  Fl.fields_base a (mst 'md 'mb) cs_e obj (U64.v wz) (U64.v wz);
   rewrite (cst major t fwd_arr queue back cs_e)
        as (cst major t fwd_arr queue back (forward_fields a (mst 'md 'mb) cs obj 0 (U64.v wz)))
 }
@@ -100,6 +112,12 @@ let scan_entry (a: tal pstate) (ms: minor_state) (cs: gstate pstate) (s: nat) : 
   then forward_fields a ms cs (Seq.index cs.queue s) 0 (minor_scan_wosize ms (Seq.index cs.queue s))
   else cs
 
+/// Whether forwarding the fields of queue entry `s` failed.
+let scan_entry_fails (a: tal pstate) (ms: minor_state) (cs: gstate pstate) (s: nat) : GTot bool =
+  if s < Seq.length cs.queue
+  then Fl.fails_fields a ms cs (Seq.index cs.queue s) 0 (minor_scan_wosize ms (Seq.index cs.queue s))
+  else false
+
 /// **One queue entry scanned**: its fields forwarded.
 #push-options "--z3rlimit 30"
 fn scan_one (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool)
@@ -110,7 +128,8 @@ fn scan_one (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool)
   ensures exists* oom'. is_minor minor 'md 'mb **
           cst major t fwd_arr queue back (scan_entry a (mst 'md 'mb) cs (SZ.v s)) **
           R.pts_to oom_ref oom' **
-          pure (pre a ph marking (mst 'md 'mb) g0 (scan_entry a (mst 'md 'mb) cs (SZ.v s)))
+          pure (pre a ph marking (mst 'md 'mb) g0 (scan_entry a (mst 'md 'mb) cs (SZ.v s)) /\
+                oom' == ('oom || scan_entry_fails a (mst 'md 'mb) cs (SZ.v s)))
 {
   let obj = get_queue major t fwd_arr queue back s;
   Sim.sim_facts a (mst 'md 'mb) g0 cs;
@@ -138,7 +157,8 @@ fn scan_loop (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool)
             (scan a (mst 'md 'mb) cs 0 (Seq.length (minor_objects (mst 'md 'mb)))) **
           R.pts_to oom_ref oom' **
           pure (pre a ph marking (mst 'md 'mb) g0
-                  (scan a (mst 'md 'mb) cs 0 (Seq.length (minor_objects (mst 'md 'mb)))))
+                  (scan a (mst 'md 'mb) cs 0 (Seq.length (minor_objects (mst 'md 'mb)))) /\
+                oom' == ('oom || Fl.fails_scan a (mst 'md 'mb) cs 0 (Seq.length (minor_objects (mst 'md 'mb)))))
 {
   let mut sc = 0sz;
   while (
@@ -152,19 +172,23 @@ fn scan_loop (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool)
       pure (pre a ph marking (mst 'md 'mb) g0 cs_s /\
             SZ.v sv <= Seq.length (minor_objects (mst 'md 'mb)) /\
             scan a (mst 'md 'mb) cs_s (SZ.v sv) (Seq.length (minor_objects (mst 'md 'mb)) - SZ.v sv) ==
-            scan a (mst 'md 'mb) cs 0 (Seq.length (minor_objects (mst 'md 'mb))))
+            scan a (mst 'md 'mb) cs 0 (Seq.length (minor_objects (mst 'md 'mb))) /\
+            (oom_s || Fl.fails_scan a (mst 'md 'mb) cs_s (SZ.v sv) (Seq.length (minor_objects (mst 'md 'mb)) - SZ.v sv)) ==
+            ('oom || Fl.fails_scan a (mst 'md 'mb) cs 0 (Seq.length (minor_objects (mst 'md 'mb)))))
     decreases (queue_size - SZ.v !sc)
   {
     let s = !sc;
     with cs_s. assert (cst major t fwd_arr queue back cs_s);
     Sim.sim_facts a (mst 'md 'mb) g0 cs_s;
     Sim.scan_step a (mst 'md 'mb) cs_s (SZ.v s) (Seq.length (minor_objects (mst 'md 'mb)) - SZ.v s);
+    Fl.scan_step a (mst 'md 'mb) cs_s (SZ.v s) (Seq.length (minor_objects (mst 'md 'mb)) - SZ.v s);
     scan_one minor major t marking fwd_arr queue back oom_ref s #a #ph #g0 #cs_s;
     sc := SZ.add s 1sz
   };
   with cs_e. assert (cst major t fwd_arr queue back cs_e);
   with sv. assert (R.pts_to sc sv);
   Sim.scan_base a (mst 'md 'mb) cs_e (SZ.v sv) (Seq.length (minor_objects (mst 'md 'mb)) - SZ.v sv);
+  Fl.scan_base a (mst 'md 'mb) cs_e (SZ.v sv) (Seq.length (minor_objects (mst 'md 'mb)) - SZ.v sv);
   rewrite (cst major t fwd_arr queue back cs_e)
        as (cst major t fwd_arr queue back (scan a (mst 'md 'mb) cs 0 (Seq.length (minor_objects (mst 'md 'mb)))))
 }
@@ -178,11 +202,13 @@ fn fwd_roots (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool)
   (#a: erased (tal pstate)) (#ph: erased I.phase) (#g0: erased heap) (#cs: erased (gstate pstate))
   requires is_minor minor 'md 'mb ** cst major t fwd_arr queue back cs ** R.pts_to oom_ref 'oom **
            pts_to roots 'rs **
-           pure (pre a ph marking (mst 'md 'mb) g0 cs /\ SZ.v nroots == Seq.length 'rs)
+           pure (pre a ph marking (mst 'md 'mb) g0 cs /\ SZ.v nroots == Seq.length 'rs /\
+                 FW.roots_follow (mst 'md 'mb) 'rs /\ Gd.roots_gd (mst 'md 'mb) 'rs)
   ensures exists* oom'. is_minor minor 'md 'mb **
           cst major t fwd_arr queue back (forward_roots a (mst 'md 'mb) cs 'rs 0) **
           R.pts_to oom_ref oom' ** pts_to roots 'rs **
-          pure (pre a ph marking (mst 'md 'mb) g0 (forward_roots a (mst 'md 'mb) cs 'rs 0))
+          pure (pre a ph marking (mst 'md 'mb) g0 (forward_roots a (mst 'md 'mb) cs 'rs 0) /\
+                oom' == ('oom || Fl.fails_roots a (mst 'md 'mb) cs 'rs 0))
 {
   let mut i = 0sz;
   while (SZ.lt !i nroots)
@@ -190,18 +216,22 @@ fn fwd_roots (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool)
       R.pts_to i iv ** is_minor minor 'md 'mb ** cst major t fwd_arr queue back cs_i **
       R.pts_to oom_ref oom_i ** pts_to roots 'rs **
       pure (SZ.v iv <= SZ.v nroots /\ pre a ph marking (mst 'md 'mb) g0 cs_i /\
-            forward_roots a (mst 'md 'mb) cs_i 'rs (SZ.v iv) == forward_roots a (mst 'md 'mb) cs 'rs 0)
+            forward_roots a (mst 'md 'mb) cs_i 'rs (SZ.v iv) == forward_roots a (mst 'md 'mb) cs 'rs 0 /\
+            (oom_i || Fl.fails_roots a (mst 'md 'mb) cs_i 'rs (SZ.v iv)) ==
+            ('oom || Fl.fails_roots a (mst 'md 'mb) cs 'rs 0))
     decreases (SZ.v nroots - SZ.v !i)
   {
     let iv = !i;
     with cs_i. assert (cst major t fwd_arr queue back cs_i);
     Sim.roots_step a (mst 'md 'mb) cs_i 'rs (SZ.v iv);
+    Fl.roots_step a (mst 'md 'mb) cs_i 'rs (SZ.v iv);
     let r = roots.(iv);
     forward_if_minor minor major t marking fwd_arr queue back oom_ref r #a #ph #g0 #cs_i;
     i := SZ.add iv 1sz
   };
   with cs_e. assert (cst major t fwd_arr queue back cs_e);
   Sim.roots_base a (mst 'md 'mb) cs_e 'rs (SZ.v nroots);
+  Fl.roots_base a (mst 'md 'mb) cs_e 'rs (SZ.v nroots);
   rewrite (cst major t fwd_arr queue back cs_e)
        as (cst major t fwd_arr queue back (forward_roots a (mst 'md 'mb) cs 'rs 0))
 }
@@ -209,8 +239,10 @@ fn fwd_roots (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool)
 
 /// **The promotion**: the roots forwarded, then the queue scanned; exactly
 /// the model's `promote a`, ending in the loop invariant.  `ok` is false
-/// when an allocation failed.  The forwarding array must be zero on entry;
-/// the queue's contents do not matter.
+/// exactly when an allocation failed (`Promote.Fail.failed`; design doc
+/// §18, U5).  It reads only what it follows (`Loop.cpre_w`, §12).  The
+/// forwarding array must be zero on entry; the queue's contents do not
+/// matter.
 #push-options "--z3rlimit 30"
 fn promote_all (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool)
   (fwd_arr queue: array U64.t) (roots: array U64.t) (nroots: SZ.t)
@@ -218,7 +250,8 @@ fn promote_all (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: boo
   requires is_minor minor 'md 'mb ** is_heap major 'g ** pages_st t 'st **
            pts_to fwd_arr 'farr ** pts_to queue 'qv ** pts_to roots 'rs **
            pure (Sim.at_phase a ph /\ marking == I.Marking? ph /\
-                 L.cpre a (mst 'md 'mb) 'g 'st /\ minor_guards_complete (mst 'md 'mb) /\
+                 L.cpre_w a (mst 'md 'mb) 'g 'st 'rs /\
+                 Gd.fields_gd (mst 'md 'mb) /\ Gd.roots_gd (mst 'md 'mb) 'rs /\
                  Seq.length 'farr == fwd_array_size /\
                  (forall (i: nat). i < fwd_array_size ==> Seq.index 'farr i == 0UL) /\
                  Seq.length 'qv == queue_size /\ SZ.v nroots == Seq.length 'rs)
@@ -226,6 +259,7 @@ fn promote_all (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: boo
   ensures exists* g' st' farr' qv'. is_minor minor 'md 'mb ** is_heap major g' ** pages_st t st' **
           pts_to fwd_arr farr' ** pts_to queue qv' ** pts_to roots 'rs **
           pure (let cs = promote a (mst 'md 'mb) 'g 'st 'rs in
+                ok == not (Fl.failed a (mst 'md 'mb) 'g 'st 'rs) /\
                 g' == cs.major /\ st' == cs.st /\
                 Seq.length farr' == fwd_array_size /\ represents_fwd farr' cs.fwd /\
                 Sim.sim a (mst 'md 'mb) 'g cs)
@@ -233,7 +267,7 @@ fn promote_all (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: boo
   let mut back = 0sz;
   let mut oom = false;
   Sim.matches_init 'g 'st 'farr 'qv;
-  Sim.sim_init a (mst 'md 'mb) 'g 'st;
+  Sim.sim_init a (mst 'md 'mb) 'g 'st 'rs;
   fold (cst major t fwd_arr queue back (Sim.init 'g 'st));
   fwd_roots minor major t marking fwd_arr queue back oom roots nroots #a #ph #'g #(Sim.init 'g 'st);
   scan_loop minor major t marking fwd_arr queue back oom

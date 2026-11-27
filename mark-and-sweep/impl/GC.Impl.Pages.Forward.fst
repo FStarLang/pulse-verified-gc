@@ -53,6 +53,9 @@ module I = GC.Spec.AllocIface
 module Sim = GC.Spec.Pages.Promote.Sim
 module CSim = GC.Gen.Cheney.Sim
 module L = GC.Spec.Pages.Promote.Loop
+module FW = GC.Spec.Pages.Promote.Follow
+module Fl = GC.Spec.Pages.Promote.Fail
+module Gd = GC.Spec.Pages.Promote.Guard
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
@@ -69,12 +72,13 @@ let cst (major: heap_t) (t: pstate_t) (fwd_arr queue: array U64.t) (back: R.ref 
     pure (Sim.matches cs g st farr q (SZ.v bk))
 
 /// What every step assumes: the allocator is the page allocator of `ph`,
-/// the nursery's guards are complete, and the loop invariant holds.
+/// the nursery's guards hold at the scanned fields (`Guard.fields_gd`), and
+/// the loop invariant holds.
 /// The nursery's state.
 let mst (d: minor_heap) (b: U64.t) : minor_state = {data = d; bump = b}
 
 let pre (a: tal pstate) (ph: I.phase) (marking: bool) (ms: minor_state) (g0: heap) (cs: gstate pstate) : prop =
-  Sim.at_phase a ph /\ marking == I.Marking? ph /\ minor_guards_complete ms /\ Sim.sim a ms g0 cs
+  Sim.at_phase a ph /\ marking == I.Marking? ph /\ Gd.fields_gd ms /\ Sim.sim a ms g0 cs
 
 /// akhil's: an address and a size in the nursery, times eight, do not overflow.
 let minor_arith_no_overflow (addr wosize: nat)
@@ -155,7 +159,7 @@ fn fwd_normal (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool
                  U64.v wz == minor_wosize (mst 'md 'mb) addr)
   ensures exists* oom'. is_minor minor 'md 'mb **
           cst major t fwd_arr queue back (forward_one a (mst 'md 'mb) cs addr) **
-          R.pts_to oom_ref oom' ** pure ('oom == true ==> oom' == true)
+          R.pts_to oom_ref oom' ** pure (oom' == ('oom || Fl.fails_one a (mst 'md 'mb) cs addr))
 {
   Sim.sim_facts a (mst 'md 'mb) g0 cs;
   minor_objects_valid (mst 'md 'mb) addr;
@@ -170,10 +174,12 @@ fn fwd_normal (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool
   with g' st'. assert (is_heap major g' ** pages_st t st');
   if (U64.eq o 0UL) {
     Sim.step_normal_oom a (mst 'md 'mb) cs g st addr g' st';
+    Fl.one_normal a (mst 'md 'mb) cs addr g' st' o;
     oom_ref := true;
     fold (cst major t fwd_arr queue back (forward_one a (mst 'md 'mb) cs addr))
   } else {
     Sim.step_normal_ok a (mst 'md 'mb) cs g st farr q (SZ.v bk) addr g' st' o;
+    Fl.one_normal a (mst 'md 'mb) cs addr g' st' o;
     fwd_arr.(SZ.uint64_to_sizet (U64.div addr 8UL)) <- o;
     let b = !back;
     fits_queue (SZ.v b + 1);
@@ -191,13 +197,15 @@ fn fwd_infix_done (major: heap_t) (t: pstate_t) (fwd_arr queue: array U64.t) (ba
   (addr p pf: U64.t)
   (#a: erased (tal pstate)) (#ms: erased minor_state) (#g0: erased heap) (#cs: erased (gstate pstate))
   requires cst major t fwd_arr queue back cs **
-           pure (Sim.sim a ms g0 cs /\ cs.fwd addr == 0UL /\ is_infix_in_minor ms addr /\
+           pure (Sim.sim a ms g0 cs /\ FW.follow_ok ms addr /\ cs.fwd addr == 0UL /\ is_infix_in_minor ms addr /\
                  p == infix_parent ms addr /\ pf == cs.fwd p /\ pf <> 0UL)
-  ensures cst major t fwd_arr queue back (forward_one a ms cs addr)
+  ensures cst major t fwd_arr queue back (forward_one a ms cs addr) **
+          pure (Fl.fails_one a ms cs addr == false)
 {
   unfold cst;
   with g st farr q bk. assert (is_heap major g ** pages_st t st ** pts_to fwd_arr farr ** pts_to queue q ** R.pts_to back bk ** pure (Sim.matches cs g st farr q (SZ.v bk)));
   Sim.step_infix_fwd a ms g0 cs g st farr q (SZ.v bk) addr;
+  Fl.one_infix_done a ms cs addr;
   let v = U64.add pf (U64.sub addr p);
   fwd_arr.(SZ.uint64_to_sizet (U64.div addr 8UL)) <- v;
   fold (cst major t fwd_arr queue back (forward_one a ms cs addr))
@@ -211,15 +219,15 @@ fn fwd_infix_new (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: b
   (fwd_arr queue: array U64.t) (back: R.ref SZ.t) (oom_ref: R.ref bool) (addr p: U64.t)
   (#a: erased (tal pstate)) (#ph: erased I.phase) (#g0: erased heap) (#cs: erased (gstate pstate))
   requires is_minor minor 'md 'mb ** cst major t fwd_arr queue back cs ** R.pts_to oom_ref 'oom **
-           pure (pre a ph marking (mst 'md 'mb) g0 cs /\
+           pure (pre a ph marking (mst 'md 'mb) g0 cs /\ FW.follow_ok (mst 'md 'mb) addr /\
                  cs.fwd addr == 0UL /\ is_infix_in_minor (mst 'md 'mb) addr /\
                  p == infix_parent (mst 'md 'mb) addr /\ cs.fwd p == 0UL)
   ensures exists* oom'. is_minor minor 'md 'mb **
           cst major t fwd_arr queue back (forward_one a (mst 'md 'mb) cs addr) **
-          R.pts_to oom_ref oom' ** pure ('oom == true ==> oom' == true)
+          R.pts_to oom_ref oom' ** pure (oom' == ('oom || Fl.fails_one a (mst 'md 'mb) cs addr))
 {
   Sim.sim_facts a (mst 'md 'mb) g0 cs;
-  infix_parent_in_minor_objects (mst 'md 'mb) addr;
+  FW.parent_facts_at (mst 'md 'mb) addr;
   minor_objects_valid (mst 'md 'mb) p;
   minor_objects_body_bound (mst 'md 'mb) p;
   minor_objects_not_infix (mst 'md 'mb) p;
@@ -233,10 +241,12 @@ fn fwd_infix_new (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: b
   with g' st'. assert (is_heap major g' ** pages_st t st');
   if (U64.eq o 0UL) {
     Sim.step_infix_oom a (mst 'md 'mb) g0 cs g st addr g' st';
+    Fl.one_infix_new a (mst 'md 'mb) cs addr g' st' o;
     oom_ref := true;
     fold (cst major t fwd_arr queue back (forward_one a (mst 'md 'mb) cs addr))
   } else {
     Sim.step_infix_new a (mst 'md 'mb) g0 cs g st farr q (SZ.v bk) addr g' st' o;
+    Fl.one_infix_new a (mst 'md 'mb) cs addr g' st' o;
     fwd_arr.(SZ.uint64_to_sizet (U64.div p 8UL)) <- o;
     let b = !back;
     fits_queue (SZ.v b + 1);
@@ -255,9 +265,11 @@ fn skip (major: heap_t) (t: pstate_t) (fwd_arr queue: array U64.t) (back: R.ref 
   (#a: erased (tal pstate)) (#ms: erased minor_state) (#cs: erased (gstate pstate))
   requires cst major t fwd_arr queue back cs **
            pure (cs.fwd addr <> 0UL \/ (~(is_infix_in_minor ms addr) /\ ~(Seq.mem addr (minor_objects ms))))
-  ensures cst major t fwd_arr queue back (forward_one a ms cs addr)
+  ensures cst major t fwd_arr queue back (forward_one a ms cs addr) **
+          pure (Fl.fails_one a ms cs addr == false)
 {
   Sim.step_skip a ms cs addr;
+  Fl.one_skip a ms cs addr;
   rewrite (cst major t fwd_arr queue back cs) as (cst major t fwd_arr queue back (forward_one a ms cs addr))
 }
 
@@ -267,15 +279,15 @@ fn fwd_infix (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking: bool)
   (fwd_arr queue: array U64.t) (back: R.ref SZ.t) (oom_ref: R.ref bool) (addr: U64.t)
   (#a: erased (tal pstate)) (#ph: erased I.phase) (#g0: erased heap) (#cs: erased (gstate pstate))
   requires is_minor minor 'md 'mb ** cst major t fwd_arr queue back cs ** R.pts_to oom_ref 'oom **
-           pure (pre a ph marking (mst 'md 'mb) g0 cs /\
+           pure (pre a ph marking (mst 'md 'mb) g0 cs /\ FW.follow_ok (mst 'md 'mb) addr /\
                  cs.fwd addr == 0UL /\ is_infix_in_minor (mst 'md 'mb) addr)
   ensures exists* oom'. is_minor minor 'md 'mb **
           cst major t fwd_arr queue back (forward_one a (mst 'md 'mb) cs addr) **
-          R.pts_to oom_ref oom' ** pure ('oom == true ==> oom' == true)
+          R.pts_to oom_ref oom' ** pure (oom' == ('oom || Fl.fails_one a (mst 'md 'mb) cs addr))
 {
   Sim.sim_facts a (mst 'md 'mb) g0 cs;
-  infix_parent_value (mst 'md 'mb) addr;
-  infix_parent_in_minor_objects (mst 'md 'mb) addr;
+  FW.infix_parent_value_at (mst 'md 'mb) addr;
+  FW.parent_facts_at (mst 'md 'mb) addr;
   let wz = read_minor_wosize minor addr;
   let p = U64.sub addr (U64.mul wz 8UL);
   let pf = get_fwd major t fwd_arr queue back p;
@@ -300,11 +312,12 @@ fn forward_if_minor (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking
   (fwd_arr queue: array U64.t) (back: R.ref SZ.t) (oom_ref: R.ref bool) (addr: U64.t)
   (#a: erased (tal pstate)) (#ph: erased I.phase) (#g0: erased heap) (#cs: erased (gstate pstate))
   requires is_minor minor 'md 'mb ** cst major t fwd_arr queue back cs ** R.pts_to oom_ref 'oom **
-           pure (pre a ph marking (mst 'md 'mb) g0 cs)
+           pure (pre a ph marking (mst 'md 'mb) g0 cs /\ FW.follow_ok (mst 'md 'mb) addr /\
+                 Gd.gd_ok (mst 'md 'mb) addr)
   ensures exists* oom'. is_minor minor 'md 'mb **
           cst major t fwd_arr queue back (forward_one a (mst 'md 'mb) cs addr) **
           R.pts_to oom_ref oom' **
-          pure ('oom == true ==> oom' == true) **
+          pure (oom' == ('oom || Fl.fails_one a (mst 'md 'mb) cs addr)) **
           pure (pre a ph marking (mst 'md 'mb) g0 (forward_one a (mst 'md 'mb) cs addr))
 {
   Sim.sim_forward_one a (mst 'md 'mb) g0 cs addr;
@@ -331,7 +344,6 @@ fn forward_if_minor (minor: minor_heap_t) (major: heap_t) (t: pstate_t) (marking
             CSim.not_minor_if_wosize_bounds_fail (mst 'md 'mb) addr;
             skip major t fwd_arr queue back addr #a #(mst 'md 'mb) #cs
           } else {
-            CSim.minor_guards_sufficient (mst 'md 'mb) addr;
             fwd_normal minor major t marking fwd_arr queue back oom_ref addr wz #a #ph #g0 #cs
           }
         }

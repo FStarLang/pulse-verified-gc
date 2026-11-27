@@ -50,16 +50,16 @@ module ML = FStar.Math.Lemmas
 
 /// What holds at the end of promotion.
 let fin (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate) : prop =
-  ctx a minor g0 /\ linv a minor g0 cs /\ Sim.fwd_injective minor cs.fwd /\
+  ctx_w a minor g0 /\ linv a minor g0 cs /\ finv minor cs /\ Sim.fwd_injective minor cs.fwd /\
   free_def_ok a.free /\ blocks_fit cs.major /\ no_infix_block cs.major /\
   CV.fwd_targets_not_free a.free cs.major cs.fwd
 
 let fin_intro (a: tal pstate) (minor: minor_state) (g0: heap) (st0: pstate) (roots: seq U64.t)
-  : Lemma (requires cpre a minor g0 st0)
+  : Lemma (requires cpre_w a minor g0 st0 roots)
           (ensures fin a minor g0 (promote a minor g0 st0 roots))
   = Sim.promote_sim a minor g0 st0 roots;
     Sim.sim_end a minor g0 (promote a minor g0 st0 roots);
-    C.promoted a minor g0 st0 roots
+    C.promoted_w a minor g0 st0 roots
 
 /// ---------------------------------------------------------------------------
 /// A forwarding entry
@@ -73,7 +73,7 @@ let target_copy (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate psta
                     ~(is_infix ((cs.fwd m) <: obj_addr) cs.major))
           (ensures ~(is_infix_in_minor minor m) /\ copy_of a minor g0 cs.major m (cs.fwd m))
   = assert (entry a minor g0 cs.major cs.fwd m);
-    if is_infix_in_minor minor m then C.infix_target a minor g0 cs.major cs.fwd m
+    if is_infix_in_minor minor m then C.infix_target_w a minor g0 cs.major cs.fwd m
 #pop-options
 
 /// A copy is a block in use.
@@ -139,6 +139,43 @@ let inj_at (minor: minor_state) (fwd: forwarding_map) (m1 m2: U64.t)
           (ensures m1 == m2)
   = ()
 
+let same_slot (i1 i2: nat)
+  : Lemma (requires i1 * 8 < pow2 64 /\ i2 * 8 < pow2 64 /\ U64.uint_to_t (i1 * 8) == U64.uint_to_t (i2 * 8))
+          (ensures i1 == i2)
+  = U64.v_inj (U64.uint_to_t (i1 * 8)) (U64.uint_to_t (i2 * 8))
+
+#push-options "--z3rlimit 40"
+let disjoint_one (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate) (farr: seq U64.t)
+                 (i1: nat{i1 < fwd_array_size}) (i2: nat{i2 < fwd_array_size})
+  : Lemma (requires fin a minor g0 cs /\ represents_fwd farr cs.fwd /\ i1 <> i2 /\
+                    (let o1 = Seq.index farr i1 in
+                     let o2 = Seq.index farr i2 in
+                     o1 <> 0UL /\ o2 <> 0UL /\
+                     U64.v o1 >= 8 /\ U64.v o2 >= 8 /\ U64.v o1 % 8 == 0 /\ U64.v o2 % 8 == 0 /\
+                     U64.v o1 < heap_size /\ U64.v o2 < heap_size /\
+                     is_infix o1 cs.major = false /\ is_infix o2 cs.major = false))
+          (ensures (let o1 = Seq.index farr i1 in
+                    let o2 = Seq.index farr i2 in
+                    U64.v o1 + U64.v (wosize_of_object o1 cs.major) * 8 <= U64.v o2 \/
+                    U64.v o2 + U64.v (wosize_of_object o2 cs.major) * 8 <= U64.v o1))
+  = let m1 = U64.uint_to_t (i1 * 8) in
+    let m2 = U64.uint_to_t (i2 * 8) in
+    farr_at farr cs.fwd i1;
+    farr_at farr cs.fwd i2;
+    let o1 = Seq.index farr i1 in
+    let o2 = Seq.index farr i2 in
+    target_copy a minor g0 cs m1;
+    target_copy a minor g0 cs m2;
+    copy_block a minor g0 cs m1;
+    copy_block a minor g0 cs m2;
+    if U64.v o1 < U64.v o2 then objects_separated zero_addr cs.major o1 o2
+    else if U64.v o2 < U64.v o1 then objects_separated zero_addr cs.major o2 o1
+    else begin
+      inj_at minor cs.fwd m1 m2;
+      same_slot i1 i2
+    end
+#pop-options
+
 #push-options "--z3rlimit 40"
 let disjoint (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate) (farr: seq U64.t)
   : Lemma (requires fin a minor g0 cs /\ represents_fwd farr cs.fwd)
@@ -155,22 +192,7 @@ let disjoint (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate)
                         let o2 = Seq.index farr i2 in
                         U64.v o1 + U64.v (wosize_of_object o1 cs.major) * 8 <= U64.v o2 \/
                         U64.v o2 + U64.v (wosize_of_object o2 cs.major) * 8 <= U64.v o1))
-      = let m1 = U64.uint_to_t (i1 * 8) in
-        let m2 = U64.uint_to_t (i2 * 8) in
-        farr_at farr cs.fwd i1;
-        farr_at farr cs.fwd i2;
-        let o1 = Seq.index farr i1 in
-        let o2 = Seq.index farr i2 in
-        target_copy a minor g0 cs m1;
-        target_copy a minor g0 cs m2;
-        copy_block a minor g0 cs m1;
-        copy_block a minor g0 cs m2;
-        if U64.v o1 < U64.v o2 then objects_separated zero_addr cs.major o1 o2
-        else if U64.v o2 < U64.v o1 then objects_separated zero_addr cs.major o2 o1
-        else begin
-          inj_at minor cs.fwd m1 m2;
-          assert (i1 * 8 == i2 * 8)
-        end
+      = disjoint_one a minor g0 cs farr i1 i2
     in
     let two (i1 i2: nat)
       : Lemma (i1 < fwd_array_size /\ i2 < fwd_array_size /\ i1 <> i2 ==>
@@ -357,7 +379,7 @@ let valid_entries (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate ps
 #push-options "--z3rlimit 30"
 let two_pass (a: tal pstate) (minor: minor_state) (g0: heap) (st0: pstate) (roots: seq U64.t)
              (farr slots: seq U64.t) (n: nat)
-  : Lemma (requires cpre a minor g0 st0 /\
+  : Lemma (requires cpre_w a minor g0 st0 roots /\
                     represents_fwd farr (promote a minor g0 st0 roots).fwd /\
                     ref_table_sound_with a.free g0 slots n /\ ref_table_covers_with a.free g0 slots n)
           (ensures (let cs = promote a minor g0 st0 roots in

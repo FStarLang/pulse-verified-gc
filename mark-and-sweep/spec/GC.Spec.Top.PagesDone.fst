@@ -3,7 +3,7 @@
 /// promotion, the blocks in use, the forwarding map
 /// ---------------------------------------------------------------------------
 ///
-/// When the promotion refused no live object (`PromoteRun.wit` fails), at
+/// When no allocation of the promotion failed (`Promote.Fail.failed`), at
 /// the end of promotion the replay invariant holds with the queue's copies
 /// (`end_ri`), and:
 ///   * the blocks in use after the collection are those before and the
@@ -47,6 +47,7 @@ module LV = GC.Spec.Top.PagesLive
 module BM = GC.Spec.Top.ByteMark
 module PM = GC.Spec.Top.PagesMinor
 module F = GC.Spec.Top.PagesFwd
+module Fl = GC.Spec.Pages.Promote.Fail
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
@@ -64,13 +65,12 @@ let cps_of (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) : GTot 
 [@@"opaque_to_smt"]
 let dpre (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M.world) : prop =
   T.cviews byte_rep cw w /\ T.minor_pre pa ph st cw.T.cmaj w /\
-  ~(PR.wit (ptal ph st) cw.T.cyng (LV.live (BM.cview cw) cw.T.cyng) (gl cw.T.cmaj st) st.ps (cs_of ph st cw).P.queue)
+  ~(Fl.failed (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) st.ps (LV.roots_of (BM.cview cw)))
 
 let dpre_elim (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M.world)
   : Lemma (requires dpre ph st cw w)
           (ensures T.cviews byte_rep cw w /\ T.minor_pre pa ph st cw.T.cmaj w /\
-                   ~(PR.wit (ptal ph st) cw.T.cyng (LV.live (BM.cview cw) cw.T.cyng) (gl cw.T.cmaj st) st.ps
-                       (cs_of ph st cw).P.queue))
+                   ~(Fl.failed (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) st.ps (LV.roots_of (BM.cview cw))))
   = reveal_opaque (`%dpre) (dpre ph st cw w)
 
 /// The promotion's state at its end.
@@ -82,7 +82,7 @@ let end_sok (ph: T.phase pprog) (st: pst) (cw: T.cworld heap minor_state) (w: M.
                     (forall (i: nat). i < Seq.length roots ==> PR.covered cw.T.cyng cs (Seq.index roots i)) /\
                     PR.scanned cw.T.cyng cs (Seq.length cs.P.queue)))
   = dpre_elim ph st cw w;
-    PM.run_done ph st cw w
+    PM.run_failed ph st cw w
 
 /// **The replay invariant at the end of promotion.**
 #push-options "--z3rlimit 40"

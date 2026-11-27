@@ -165,6 +165,7 @@ let c10a () : Lemma (requires pw_room /\ cok)
     write_ev ic x d (xA ()) 0 i1
 #pop-options
 
+#push-options "--z3rlimit 40"
 let c10 () : Lemma (requires pw_room /\ cok) (ensures holds (x10 ()) (d10 ()) /\ ok (x9 ()) (e9 ()))
   = c10a (); in_use8 (); c9a (); distinct ();
     setv0 (vB ()) i1 i1;
@@ -172,6 +173,7 @@ let c10 () : Lemma (requires pw_room /\ cok) (ensures holds (x10 ()) (d10 ()) /\
     let pt (y: nat) : Lemma ((d10 ()).db y == d'.db y) = () in
     FStar.Classical.forall_intro pt;
     holds_ext (x10 ()) d' (d10 ())
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// 10-12: two young blocks, and a minor collection while marking

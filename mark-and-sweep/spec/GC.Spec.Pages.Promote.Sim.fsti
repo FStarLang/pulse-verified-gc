@@ -43,6 +43,7 @@ module AT = GC.Spec.Pages.AllocTag
 module Inc = GC.Spec.Pages.Incr
 module L = GC.Spec.Pages.Promote.Loop
 module MS = GC.Spec.Pages.MidSweep
+module FW = GC.Spec.Pages.Promote.Follow
 
 #set-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 
@@ -93,14 +94,14 @@ let fwd_injective (minor: minor_state) (fwd: forwarding_map) : prop =
 
 val sim (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate) : prop
 
-val sim_init (a: tal pstate) (minor: minor_state) (g0: heap) (st0: pstate)
-  : Lemma (requires L.cpre a minor g0 st0)
+val sim_init (a: tal pstate) (minor: minor_state) (g0: heap) (st0: pstate) (roots: seq U64.t)
+  : Lemma (requires L.cpre_w a minor g0 st0 roots)
           (ensures sim a minor g0 (init g0 st0))
 
 /// What the Pulse loop reads off the invariant.
 val sim_facts (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate)
   : Lemma (requires sim a minor g0 cs)
-          (ensures minor_wf minor /\ minor_infix_wf minor /\ a.inv cs.major cs.st /\
+          (ensures minor_wf minor /\ FW.fields_follow minor /\ a.inv cs.major cs.st /\
                    contract a /\ Seq.length cs.queue <= Seq.length (minor_objects minor) /\
                    Seq.length (minor_objects minor) < fwd_array_size)
 
@@ -122,7 +123,7 @@ val sim_strict_room (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate 
 
 /// **Every step keeps the invariant.**
 val sim_forward_one (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate) (addr: U64.t)
-  : Lemma (requires sim a minor g0 cs)
+  : Lemma (requires sim a minor g0 cs /\ FW.follow_ok minor addr)
           (ensures sim a minor g0 (forward_one a minor cs addr))
 
 /// ---------------------------------------------------------------------------
@@ -193,7 +194,7 @@ val step_normal_oom (a: tal pstate) (minor: minor_state) (cs: gstate pstate) (g:
 /// An infix address whose closure is forwarded: the same offset in its copy.
 val step_infix_fwd (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate)
                    (g: heap) (st: pstate) (farr q: seq U64.t) (bk: nat) (addr: U64.t)
-  : Lemma (requires matches cs g st farr q bk /\ sim a minor g0 cs /\
+  : Lemma (requires matches cs g st farr q bk /\ sim a minor g0 cs /\ FW.follow_ok minor addr /\
                     cs.fwd addr == 0UL /\ is_infix_in_minor minor addr /\
                     cs.fwd (infix_parent minor addr) <> 0UL)
           (ensures (let p = infix_parent minor addr in
@@ -207,7 +208,7 @@ val step_infix_fwd (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate p
 val step_infix_new (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate)
                    (g: heap) (st: pstate) (farr q: seq U64.t) (bk: nat)
                    (addr: U64.t) (g': heap) (st': pstate) (o: U64.t)
-  : Lemma (requires matches cs g st farr q bk /\ sim a minor g0 cs /\
+  : Lemma (requires matches cs g st farr q bk /\ sim a minor g0 cs /\ FW.follow_ok minor addr /\
                     cs.fwd addr == 0UL /\ is_infix_in_minor minor addr /\
                     (let p = infix_parent minor addr in
                      U64.v p >= 8 /\ U64.v p < minor_heap_size /\ U64.v p % 8 == 0 /\
@@ -225,7 +226,7 @@ val step_infix_new (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate p
 /// An infix address whose closure's promotion failed: nothing changes.
 val step_infix_oom (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate)
                    (g: heap) (st: pstate) (addr: U64.t) (g': heap) (st': pstate)
-  : Lemma (requires g == cs.major /\ st == cs.st /\ sim a minor g0 cs /\
+  : Lemma (requires g == cs.major /\ st == cs.st /\ sim a minor g0 cs /\ FW.follow_ok minor addr /\
                     cs.fwd addr == 0UL /\ is_infix_in_minor minor addr /\
                     (let p = infix_parent minor addr in
                      minor_wosize minor p > 0 /\ cs.fwd p == 0UL /\
@@ -266,15 +267,15 @@ val scan_base (a: tal pstate) (minor: minor_state) (cs: gstate pstate) (sc fuel:
 
 /// The fields loop keeps the invariant.
 val sim_fields (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate) (p: U64.t) (i wz: nat)
-  : Lemma (requires sim a minor g0 cs)
+  : Lemma (requires sim a minor g0 cs /\ Seq.mem p (minor_objects minor) /\ wz <= minor_scan_wosize minor p)
           (ensures sim a minor g0 (forward_fields a minor cs p i wz))
 
 /// **Promotion ends in the invariant.**
 val promote_sim (a: tal pstate) (minor: minor_state) (g0: heap) (st0: pstate) (roots: seq U64.t)
-  : Lemma (requires L.cpre a minor g0 st0)
+  : Lemma (requires L.cpre_w a minor g0 st0 roots)
           (ensures sim a minor g0 (promote a minor g0 st0 roots))
 
 /// What the invariant gives at the end, for the pointer update.
 val sim_end (a: tal pstate) (minor: minor_state) (g0: heap) (cs: gstate pstate)
   : Lemma (requires sim a minor g0 cs)
-          (ensures L.ctx a minor g0 /\ L.linv a minor g0 cs /\ fwd_injective minor cs.fwd)
+          (ensures L.ctx_w a minor g0 /\ L.linv a minor g0 cs /\ L.finv minor cs /\ fwd_injective minor cs.fwd)

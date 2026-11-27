@@ -182,6 +182,8 @@ let named_post (j: nat) : Lemma (requires pw_room /\ cok /\ j < 3 /\ 21 + ksw ()
     names_23 ();
     assert (21 + ksw () + 1 == 22 + ksw ())
 
+let post_at (i k j: nat) : Lemma (requires i >= 21 + k /\ j == i - 21 - k) (ensures 21 + k + j == i) = ()
+
 let named_at (i: nat) : Lemma (requires pw_room /\ cok /\ i < L.length (es_inc ()) /\ is_mutator_event (ev (es_inc ()) i))
   (ensures enamed (wv (atn i)) (ev (es_inc ()) i))
   = es_is (); shape ();
@@ -189,7 +191,11 @@ let named_at (i: nat) : Lemma (requires pw_room /\ cok /\ i < L.length (es_inc (
     if i < 7 then named_pre i
     else if i < 21 then named_mid i
     else if i < 21 + ksw () then ev_r (pre21 ()) (ksw ()) (post ()) (i - 21)
-    else named_post (i - 21 - ksw ())
+    else begin
+      let j : nat = i - 21 - ksw () in
+      post_at i (ksw ()) j;
+      named_post j
+    end
 
 /// **Every program event of the incremental run names only what it reaches.**
 let inc_named () : Lemma (requires pw_room /\ cok)

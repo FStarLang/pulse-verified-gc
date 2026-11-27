@@ -234,6 +234,50 @@ let inc_darkens () : Lemma (requires pw_room /\ cok)
 /// **The minor collections inside the cycle promote**, at 12 while marking
 /// and at 19 while sweeping: Y1 (an infix pointer into K) and Y2 (an
 /// integer that reads as an infix header); the last one runs idle.
+/// The nursery of the cycle's collections: its two fields.
+let nice12_fields () : Lemma (requires pw_room /\ cok)
+  (ensures M.field (PWMu.ym2 (vK2 ()) iw) 0 0 == vK2 () /\ M.field (PWMu.ym2 (vK2 ()) iw) 2 0 == iw)
+  = c12 (); nice12 (); holds_elim (x12 ()) (d12 ()); st_vals ()
+
+let inc_promotes12 () : Lemma (requires pw_room /\ cok)
+  (ensures 23 + ksw () < L.length (es_inc ()) /\
+           ev (es_inc ()) 12 == EMinor /\ T.Marking? (atn 12).ph /\
+           T.Done? (PWM.mres (atn 12)) /\ Some? (PWM.mfwd (atn 12) 0) /\ Some? (PWM.mfwd (atn 12) 2) /\
+           (atn 12).w.cyng == PWMu.ms2 (vK2 ()) iw)
+  = at_chain (); shape (); pre_idx (); ev21 12;
+    es_is (); mid_known ();
+    len3 (pre21 ()) (ksw ()) (post ());
+    c12 (); c13 (); nice12 ();
+    holds_elim (x12 ()) (d12 ());
+    st_vals ()
+
+let inc_promotes19 () : Lemma (requires pw_room /\ cok)
+  (ensures 23 + ksw () < L.length (es_inc ()) /\
+           ev (es_inc ()) 19 == EMinor /\ T.Sweeping? (atn 19).ph /\
+           T.Done? (PWM.mres (atn 19)) /\ Some? (PWM.mfwd (atn 19) 0) /\ Some? (PWM.mfwd (atn 19) 2) /\
+           (atn 19).w.cyng == PWMu.ms2 (vK2 ()) iw)
+  = at_chain (); shape (); pre_idx (); ev21 19;
+    es_is (); mid_known ();
+    len3 (pre21 ()) (ksw ()) (post ());
+    c19 (); c20 ();
+    holds_elim (x19 ()) (d19 ());
+    st_vals ()
+
+let inc_promotes_rest () : Lemma (requires pw_room /\ cok)
+  (ensures 23 + ksw () < L.length (es_inc ()) /\
+           M.field (PWMu.ym2 (vK2 ()) iw) 0 0 == vK2 () /\ M.field (PWMu.ym2 (vK2 ()) iw) 2 0 == iw /\
+           Some? (M.infix_hdr iw) /\
+           ev (es_inc ()) (23 + ksw ()) == EMinor /\ T.Idle? (atn (23 + ksw ())).ph)
+  = at_post (); shape ();
+    es_is (); mid_known ();
+    len3 (pre21 ()) (ksw ()) (post ());
+    ev_q (pre21 ()) (ksw ()) (post ()) 2;
+    c24 ();
+    holds_elim (x24 ()) (d24 ());
+    st_vals ();
+    nice12_fields ();
+    assert_norm (M.infix_hdr (M.VInt 2297) == Some 2)
+
 let inc_promotes () : Lemma (requires pw_room /\ cok)
   (ensures 23 + ksw () < L.length (es_inc ()) /\
            ev (es_inc ()) 12 == EMinor /\ T.Marking? (atn 12).ph /\
@@ -244,14 +288,7 @@ let inc_promotes () : Lemma (requires pw_room /\ cok)
            Some? (M.infix_hdr iw) /\
            (atn 12).w.cyng == PWMu.ms2 (vK2 ()) iw /\ (atn 19).w.cyng == PWMu.ms2 (vK2 ()) iw /\
            ev (es_inc ()) (23 + ksw ()) == EMinor /\ T.Idle? (atn (23 + ksw ())).ph)
-  = at_chain (); at_post (); shape (); pre_idx (); ev21 12; ev21 19;
-    es_is (); shape (); mid_known ();
-    len3 (pre21 ()) (ksw ()) (post ());
-    ev_q (pre21 ()) (ksw ()) (post ()) 2;
-    c12 (); c13 (); c19 (); c20 (); c24 (); nice12 ();
-    holds_elim (x12 ()) (d12 ()); holds_elim (x19 ()) (d19 ()); holds_elim (x24 ()) (d24 ());
-    st_vals ();
-    assert_norm (M.infix_hdr (M.VInt 2297) == Some 2)
+  = inc_promotes12 (); inc_promotes19 (); inc_promotes_rest ()
 
 let sweeping_17_20 () : Lemma (requires pw_room /\ cok)
   (ensures T.Sweeping? (atn 17).ph /\ T.Sweeping? (atn 20).ph)

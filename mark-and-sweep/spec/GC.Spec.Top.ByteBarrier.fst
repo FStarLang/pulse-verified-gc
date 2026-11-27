@@ -58,8 +58,21 @@ let darken_old (g: heap) (o i: nat) : GTot heap =
   | Some t -> if pos t + 8 < heap_size && is_white (obj_of t) g then makeGray (obj_of t) g else g
   | None -> g
 
+/// The slot is remembered once, at the back: the order of C's
+/// `caml_ref_table` (design doc §18.3, U3).
 let remember (g: heap) (rem: list M.slot) (o i: nat) (v: M.value) : GTot (list M.slot) =
-  if T.young_slot (cabs g) o i v then (o, i) :: rem else rem
+  if T.young_slot (cabs g) o i v && not (L.mem (o, i) rem) then L.append rem [(o, i)] else rem
+
+/// What the contract asks of the remembered set.
+let remember_ok (g: heap) (rem: list M.slot) (o i: nat) (v: M.value)
+  : Lemma ((forall (sl: M.slot). L.memP sl rem ==> L.memP sl (remember g rem o i v)) /\
+           (T.young_slot (cabs g) o i v ==> L.memP (o, i) (remember g rem o i v)))
+  = L.mem_memP (o, i) rem;
+    let one (sl: M.slot) : Lemma (L.memP sl rem ==> L.memP sl (L.append rem [(o, i)]))
+      = L.append_memP rem [(o, i)] sl in
+    FStar.Classical.forall_intro one;
+    L.append_memP rem [(o, i)] (o, i);
+    assert_norm (L.memP (o, i) [(o, i)])
 
 /// **`caml_modify`**: darken the old value while marking, then write.
 let bwrite (marking: bool) (g: heap) (rem: list M.slot) (o i: nat) (v: M.value) : GTot (heap & list M.slot) =
@@ -245,8 +258,8 @@ let tdark_shape (marking: bool) (h: M.mheap) (o i: nat)
 let bwrite_cabs (marking: bool) (m: M.mheap) (g: heap) (rem: list M.slot) (o i: nat) (v: M.value)
   : Lemma (requires R.heq m (cabs g) /\ M.is_block m o /\ i < M.wz_of m o /\ storable_w v)
           (ensures (let (g', rem') = bwrite marking g rem o i v in
-                    let (m', trem) = TM.tbwrite marking m rem o i v in
-                    R.heq m' (cabs g') /\ rem' == trem))
+                    let (m', _) = TM.tbwrite marking m rem o i v in
+                    R.heq m' (cabs g') /\ rem' == remember g rem o i v))
   = let g1 = if marking then darken_old g o i else g in
     darken_cabs marking g o i;
     tdark_heq marking m (cabs g) o i;
@@ -260,12 +273,14 @@ let bwrite_cabs (marking: bool) (m: M.mheap) (g: heap) (rem: list M.slot) (o i: 
 let bwrite_ok (marking: bool) (g: heap) (rem: list M.slot) (o i: nat) (v: M.value)
   : Lemma (T.barrier_write_at byte_rep bbarrier marking g rem o i v)
   = let (g', rem') = bwrite marking g rem o i v in
+    remember_ok g rem o i v;
     let one (m: M.mheap)
       : Lemma (requires byte_rep.R.repr m g /\ T.write_pre o i v (byte_rep.R.storable v) m)
               (ensures exists (m': M.mheap). byte_rep.R.repr m' g' /\ T.write_post marking rem rem' o i v m m')
       = bwrite_cabs marking m g rem o i v;
         TM.tbwrite_m marking m rem o i v;
         let (m', _) = TM.tbwrite marking m rem o i v in
+        assert (T.young_slot m o i v == T.young_slot (cabs g) o i v);
         assert (byte_rep.R.repr m' g') in
     FStar.Classical.forall_intro (FStar.Classical.move_requires one)
 
@@ -329,6 +344,7 @@ let rec binit_from_ok (g: heap) (rem: list M.slot) (o i: nat) (vs: list M.value)
     | [] -> ()
     | v :: tl ->
       let rem1 = remember g rem o i v in
+      remember_ok g rem o i v;
       cabs_write_field g o i (concv v);
       absv_concv v;
       let g1 = write_word g (hp (o + 1 + i)) (concv v) in

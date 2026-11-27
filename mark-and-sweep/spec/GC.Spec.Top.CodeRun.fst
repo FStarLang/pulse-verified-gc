@@ -77,3 +77,21 @@ let point (c: comps) (sty: style) (n ny: nat) (es: list event)
           (ensures concl_point (cur c n ny es) /\ c.a.inv (cur c n ny es).ph (cur c n ny es).w.cmaj (cur c n ny es).ast)
   = GC.Spec.Top.Correct.gc_correct_ok c sty;
     assert (conclusions c n ny es)
+
+/// **The run invariant at every point of a run**, and what one more step
+/// keeps (`Point.step_post`: among others, every kept block stays in use
+/// with its size and tag, clause (1a)).
+let rinv_cur (c: comps) (sty: style) (n ny: nat) (es: list event)
+  : Lemma (requires components_ok c /\ run_ok c sty n ny es)
+          (ensures GC.Spec.Top.RInv.rinv (cur c n ny es))
+  = RF.run_hyps_of_ok c n ny es;
+    GC.Spec.Top.Correct.run_pre_intro c sty n ny es;
+    GC.Spec.Top.Point.rinv_at c sty n ny es (L.length es)
+
+let step_facts (c: comps) (sty: style) (n ny: nat) (es: list event) (e: event)
+  : Lemma (requires components_ok c /\ run_ok c sty n ny es /\ allowed c sty (cur c n ny es) e)
+          (ensures GC.Spec.Top.RInv.rinv (cur c n ny es) /\
+                   GC.Spec.Top.Point.step_post (cur c n ny es) e (step c (cur c n ny es) e))
+  = rinv_cur c sty n ny es;
+    hyps_of_ok c (cur c n ny es) e;
+    GC.Spec.Top.Point.step_ok (cur c n ny es) e
