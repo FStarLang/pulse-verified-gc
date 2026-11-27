@@ -345,10 +345,35 @@ let forall_views (#t #yt: Type0) (r: rep t yt) (cw: cworld t yt) (f: world -> pr
 /// The mark: fixed, allocator-free
 /// ---------------------------------------------------------------------------
 
+/// The mark's scan, as the model reads it: the block it has started to
+/// scan and is not done with, and the next field to scan (design doc §18,
+/// U1; akhil's `scan_pos`).
+type scan = option (nat & nat)
+
+/// **One move of the mark** (akhil's `mark_move`): start scanning a grey
+/// block, scan the next field of the block being scanned (its target
+/// darkened), or blacken a grey block whose fields are all scanned.
+noeq type move =
+  | MBegin : o:nat -> move
+  | MGrey  : move
+  | MBlack : o:nat -> move
+
+/// The mark: its own state, read as a scan; the start; and a move.  A slice
+/// is a list of moves.
 noeq type mark (t yt: Type0) = {
+  mstate : Type0;
+  mscan  : mstate -> scan;
+  mnone  : ms:mstate{mscan ms == None};
   mstart : cworld t yt -> GTot t;
-  mslice : t -> GTot t;
+  mmove  : t -> mstate -> move -> GTot (t & mstate);
 }
+
+/// A slice: the moves in order.
+let rec mmoves (#t #yt: Type0) (mk: mark t yt) (h: t) (ms: mk.mstate) (mvs: list move)
+  : GTot (t & mk.mstate) (decreases mvs) =
+  match mvs with
+  | [] -> (h, ms)
+  | mv :: tl -> let (h1, ms1) = mk.mmove h ms mv in mmoves mk h1 ms1 tl
 
 let mark_done (h: mheap) : prop = no_grey h
 
@@ -394,6 +419,30 @@ let mark_no_increase (h h': mheap) (live: nat -> prop) : prop =
   ((exists (o: nat). white_live h live o /\ ~(white_live h' live o)) \/
    (forall (o: nat). grey_live h' live o ==> grey_live h live o))
 
+/// The mark's measure with its scan (design doc §18, U1): the white, then
+/// the grey, live objects, then the fields left to scan in the block being
+/// scanned (more than any block's when none is), lexicographically.
+let fleft (h: mheap) (sc: scan) : nat =
+  match sc with
+  | Some (o, i) -> if is_block h o && i <= wz_of h o then wz_of h o - i else 0
+  | None -> h.size + 1
+
+/// A slice strictly decreases it ...
+let mark_dec (h: mheap) (sc: scan) (h': mheap) (sc': scan) (live: nat -> prop) : prop =
+  (forall (o: nat). white_live h' live o ==> white_live h live o) /\
+  ((exists (o: nat). white_live h live o /\ ~(white_live h' live o)) \/
+   ((forall (o: nat). white_live h' live o <==> white_live h live o) /\
+    (forall (o: nat). grey_live h' live o ==> grey_live h live o) /\
+    ((exists (o: nat). grey_live h live o /\ ~(grey_live h' live o)) \/
+     ((forall (o: nat). grey_live h' live o <==> grey_live h live o) /\ fleft h' sc' < fleft h sc))))
+
+/// ... and no other event increases it.
+let mark_noinc (h: mheap) (sc: scan) (h': mheap) (sc': scan) (live: nat -> prop) : prop =
+  (forall (o: nat). white_live h' live o ==> white_live h live o) /\
+  ((exists (o: nat). white_live h live o /\ ~(white_live h' live o)) \/
+   ((forall (o: nat). grey_live h' live o ==> grey_live h live o) /\
+    ((exists (o: nat). grey_live h live o /\ ~(grey_live h' live o)) \/ fleft h' sc' <= fleft h sc)))
+
 /// The mark only darkens: a block whose colour changes becomes grey or
 /// black (G50, design doc §16.2); no other address changes colour (G52,
 /// §16.10: a model's headers past the heap's end are free).
@@ -420,6 +469,81 @@ let mark_start_at (#t #yt: Type0) (r: rep t yt) (mk: mark t yt) (cw: cworld t yt
 
 let union (s1 s2: nat -> prop) (o: nat) : prop = s1 o \/ s2 o
 
+/// ---------------------------------------------------------------------------
+/// The moves on the model
+/// ---------------------------------------------------------------------------
+
+/// Field `i` of `o` has not been scanned.
+let unscanned (sc: scan) (o i: nat) : bool =
+  match sc with Some (c, j) -> o <> c || i >= j | None -> true
+
+/// An edge through a field the mark has still to scan.
+let uedge (h: mheap) (sc: scan) (o o': nat) : prop =
+  exists (i a: nat). ptr_field h o i /\ unscanned sc o i /\ field h o i == VPtr (Major a) /\ resolve h a == Some o'
+
+/// The target of field `i` of `o`, if a major pointer the model resolves.
+let field_target (h: mheap) (o i: nat) : option nat =
+  if ptr_field h o i then (match field h o i with VPtr (Major a) -> resolve h a | _ -> None) else None
+
+/// Scanning field `i` of `o`: its target greyed if white.
+let darken_field (h: mheap) (o i: nat) : mheap =
+  match field_target h o i with
+  | Some t -> if col_of h t = White then set_col h t Grey else h
+  | None -> h
+
+/// A move the mark may make (akhil's `begin_move`, `grey_move`, `black_move`):
+/// start a grey scannable block when none is being scanned; scan the next
+/// field of the block being scanned; blacken a grey block whose fields are
+/// all scanned (it has none to scan, or the scan has passed them).
+let move_ok (h: mheap) (sc: scan) (mv: move) : bool =
+  match mv with
+  | MBegin o -> None? sc && is_block h o && col_of h o = Grey && scannable (tag_of h o)
+  | MGrey ->
+    (match sc with
+     | Some (o, i) -> is_block h o && col_of h o = Grey && scannable (tag_of h o) && i < wz_of h o
+     | None -> false)
+  | MBlack o ->
+    is_block h o && col_of h o = Grey &&
+    (not (scannable (tag_of h o)) ||
+     (match sc with Some (c, j) -> (if c = o then wz_of h o <= j else wz_of h o = 0) | None -> wz_of h o = 0))
+
+let move_heap (h: mheap) (sc: scan) (mv: move) : mheap =
+  match mv with
+  | MBegin _ -> h
+  | MGrey -> (match sc with Some (o, i) -> darken_field h o i | None -> h)
+  | MBlack o -> set_col h o Black
+
+let move_scan (sc: scan) (mv: move) : scan =
+  match mv with
+  | MBegin o -> Some (o, 0)
+  | MGrey -> (match sc with Some (o, i) -> Some (o, i + 1) | None -> None)
+  | MBlack o -> (match sc with Some (c, _) -> if c = o then None else sc | None -> None)
+
+/// The moves of a slice may be made, in order.
+let rec moves_ok (h: mheap) (sc: scan) (mvs: list move) : Tot bool (decreases mvs) =
+  match mvs with
+  | [] -> true
+  | mv :: tl -> move_ok h sc mv && moves_ok (move_heap h sc mv) (move_scan sc mv) tl
+
+/// **The mark's contract**: a move the model allows is the model's move, on
+/// every model heap representing the mark's heap, and the mark's state reads
+/// as the model's scan after it.
+let mark_move_m (#t #yt: Type0) (r: rep t yt) (mk: mark t yt) (h: t) (ms: mk.mstate) (mv: move) (m: mheap)
+  : prop =
+  well_formed m /\ move_ok m (mk.mscan ms) mv ==>
+  (let (h', ms') = mk.mmove h ms mv in
+   mk.mscan ms' == move_scan (mk.mscan ms) mv /\ r.repr (move_heap m (mk.mscan ms) mv) h')
+
+let mark_move_at (#t #yt: Type0) (r: rep t yt) (mk: mark t yt) (h: t) (ms: mk.mstate) (mv: move) : prop =
+  forall_repr r h (mark_move_m r mk h ms mv)
+
+/// The contract at every move of a slice.
+let rec moves_at (#t #yt: Type0) (r: rep t yt) (mk: mark t yt) (h: t) (ms: mk.mstate) (mvs: list move)
+  : Tot prop (decreases mvs) =
+  match mvs with
+  | [] -> True
+  | mv :: tl -> mark_move_at r mk h ms mv /\ (let (h1, ms1) = mk.mmove h ms mv in moves_at r mk h1 ms1 tl)
+
 let mark_slice_pre (snap allocd: nat -> prop) (m: mheap) : prop =
   well_formed m /\ tricolour m snap allocd /\ closed m (union snap allocd) /\ ~(mark_done m)
 
@@ -428,11 +552,8 @@ let mark_slice_pre (snap allocd: nat -> prop) (m: mheap) : prop =
 let mark_slice_post (snap allocd: nat -> prop) (m m': mheap) : prop =
   colours_only m m' /\ darken_only m m' /\ tricolour m' snap allocd /\ mark_decreases m m' (union snap allocd)
 
-let mark_slice_at (#t #yt: Type0) (r: rep t yt) (mk: mark t yt) (h: t) (snap allocd: nat -> prop) : prop =
-  lifted r (mark_slice_pre snap allocd) h (mk.mslice h) (mark_slice_post snap allocd)
-
 let mark_ok (#t #yt: Type0) (r: rep t yt) (mk: mark t yt) : prop =
-  (forall w. mark_start_at r mk w) /\ (forall h snap allocd. mark_slice_at r mk h snap allocd)
+  (forall w. mark_start_at r mk w) /\ (forall h ms mv. mark_move_at r mk h ms mv)
 
 /// ---------------------------------------------------------------------------
 /// The minor collection

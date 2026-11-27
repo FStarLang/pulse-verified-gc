@@ -54,6 +54,7 @@ noeq type config (c: comps) = {
   snap    : nat -> prop;        (* snapshot_k = reachable(s) *)
   allocd  : nat -> prop;        (* allocated_k: allocated, or promoted copies, since s *)
   stopped : bool;               (* a minor collection ran out of room *)
+  ms      : c.m.mstate;         (* the mark's own state: what it is scanning *)
 }
 
 noeq type event =
@@ -64,7 +65,7 @@ noeq type event =
   | ERoots      : roots:list value -> event
   | EMinor      : event
   | EStart      : event
-  | ESlice      : event
+  | ESlice      : mvs:list move -> event         (* the moves the mark made *)
   | EHandover   : event
   | ESweep      : event
   | EEnd        : event
@@ -92,6 +93,9 @@ let vw (#c: comps) (x: config c) : GTot world =
 let wv (#c: comps) (x: config c) : GTot world = vw x
 let mj (#c: comps) (x: config c) : GTot mheap = (vw x).maj
 
+/// The mark's scan, as the model reads its state.
+let scan_of (#c: comps) (x: config c) : scan = c.m.mscan x.ms
+
 let vw_views (#c: comps) (x: config c)
   : Lemma (requires has_view x) (ensures views x (vw x))
   = ()
@@ -100,7 +104,7 @@ let init_config (c: comps) (n ny: nat) : GTot (config c) =
   let (h, st) = c.a.init n in
   { w = { cmaj = h; cyng = c.r.yinit ny; croots = []; crem = [] };
     ph = Idle; ast = st; hs = h;
-    snap = (fun _ -> False); allocd = (fun _ -> False); stopped = false }
+    snap = (fun _ -> False); allocd = (fun _ -> False); stopped = false; ms = c.m.mnone }
 
 let step (c: comps) (x: config c) (e: event) : GTot (config c) =
   match e with
@@ -136,9 +140,10 @@ let step (c: comps) (x: config c) (e: event) : GTot (config c) =
                 allocd = (fun p -> x.allocd p \/ (exists (o: nat). fwd o == Some p)) })
   | EStart ->
     { x with w = { x.w with cmaj = c.m.mstart x.w }; ph = Marking; hs = x.w.cmaj;
-             snap = reachable (vw x); allocd = (fun _ -> False) }
-  | ESlice ->
-    { x with w = { x.w with cmaj = c.m.mslice x.w.cmaj } }
+             snap = reachable (vw x); allocd = (fun _ -> False); ms = c.m.mnone }
+  | ESlice mvs ->
+    let (h', ms') = mmoves c.m x.w.cmaj x.ms mvs in
+    { x with w = { x.w with cmaj = h' }; ms = ms' }
   | EHandover ->
     let (p, st') = c.s.start x.w.cmaj x.ast in
     { x with ph = Sweeping p; ast = st' }
@@ -155,8 +160,8 @@ let enabled (c: comps) (x: config c) (e: event) : prop =
   (match e with
    | EYoungAlloc sz tag vs -> Some? (c.r.yalloc x.w.cyng sz tag vs)
    | EStart -> Idle? x.ph
-   | ESlice -> Marking? x.ph /\ ~(mark_done (mj x))
-   | EHandover -> Marking? x.ph /\ mark_done (mj x)
+   | ESlice mvs -> Marking? x.ph /\ Cons? mvs /\ moves_ok (mj x) (c.m.mscan x.ms) mvs
+   | EHandover -> Marking? x.ph /\ mark_done (mj x) /\ None? (c.m.mscan x.ms)
    | ESweep -> Sweeping? x.ph /\ c.s.done (Sweeping?._0 x.ph) == false
    | EEnd -> Sweeping? x.ph /\ c.s.done (Sweeping?._0 x.ph) == true
    | _ -> True)
@@ -260,8 +265,8 @@ let hyps_at (c: comps) (x: config c) (e: event) : prop =
    | EStart ->
      mark_start_at r c.m x.w /\ inv_start_at c.a h x.ast /\
      inv_frame_at r c.a Marking h x.ast (c.m.mstart x.w)
-   | ESlice ->
-     mark_slice_at r c.m h x.snap x.allocd /\ inv_frame_at r c.a x.ph h x.ast (c.m.mslice h)
+   | ESlice mvs ->
+     moves_at r c.m h x.ms mvs /\ inv_frame_at r c.a x.ph h x.ast (fst (mmoves c.m h x.ms mvs))
    | EHandover -> sweep_start_at r c.s h x.ast
    | ESweep -> (match x.ph with Sweeping p -> sweep_step_at r c.s p h x.ast | _ -> True)
    | EEnd -> (match x.ph with Sweeping p -> sweep_done_at r c.s p h x.ast | _ -> True)
@@ -385,8 +390,8 @@ let concl_step (#c: comps) (x: config c) (e: event) (x': config c) : prop =
   (* (6) the measures: a slice decreases the mark's, no other event while marking increases it;
          a sweep step strictly shrinks the unswept set, which nothing else changes *)
   (Marking? x.ph /\ Marking? x'.ph ==>
-     (ESlice? e ==> mark_decreases (mj x) (mj x') (live x')) /\
-     (~(ESlice? e) ==> mark_no_increase (mj x) (mj x') (live x'))) /\
+     (ESlice? e ==> mark_dec (mj x) (scan_of x) (mj x') (scan_of x') (live x')) /\
+     (~(ESlice? e) ==> mark_noinc (mj x) (scan_of x) (mj x') (scan_of x') (live x'))) /\
   (match x.ph, x'.ph with
    | Sweeping p, Sweeping p' ->
      (ESweep? e ==> (forall (o: nat). c.k.unswept p' o ==> c.k.unswept p o) /\
@@ -473,6 +478,13 @@ let gc_correct_local (c: comps) (sty: style) : prop =
   faithful c.r ==>
   (forall (n ny: nat) (es: list event). run_ok c sty n ny es /\ run_hyps c n ny es ==> conclusions c n ny es)
 
+/// The mark's contract at every move of a slice.
+let rec moves_at_ok (c: comps) (h: c.t) (ms: c.m.mstate) (mvs: list move)
+  : Lemma (requires components_ok c) (ensures moves_at c.r c.m h ms mvs) (decreases mvs)
+  = match mvs with
+    | [] -> ()
+    | mv :: tl -> let (h1, ms1) = c.m.mmove h ms mv in moves_at_ok c h1 ms1 tl
+
 /// The contracts give the hypotheses of every step.
 let hyps_of_ok (c: comps) (x: config c) (e: event)
   : Lemma (requires components_ok c) (ensures hyps_at c x e)
@@ -497,9 +509,9 @@ let hyps_of_ok (c: comps) (x: config c) (e: event)
       assert (mark_start_at r c.m x.w);
       assert (inv_start_at c.a x.w.cmaj x.ast);
       assert (inv_frame_at r c.a Marking x.w.cmaj x.ast (c.m.mstart x.w))
-    | ESlice ->
-      assert (mark_slice_at r c.m x.w.cmaj x.snap x.allocd);
-      assert (inv_frame_at r c.a x.ph x.w.cmaj x.ast (c.m.mslice x.w.cmaj))
+    | ESlice mvs ->
+      moves_at_ok c x.w.cmaj x.ms mvs;
+      assert (inv_frame_at r c.a x.ph x.w.cmaj x.ast (fst (mmoves c.m x.w.cmaj x.ms mvs)))
     | EHandover -> assert (sweep_start_at r c.s x.w.cmaj x.ast)
     | ESweep -> (match x.ph with Sweeping p -> assert (sweep_step_at r c.s p x.w.cmaj x.ast) | _ -> ())
     | EEnd -> (match x.ph with Sweeping p -> assert (sweep_done_at r c.s p x.w.cmaj x.ast) | _ -> ())

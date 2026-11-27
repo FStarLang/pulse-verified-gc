@@ -30,7 +30,7 @@ module C = FStar.Classical
 /// ---------------------------------------------------------------------------
 
 let same_cfg (#c: comps) (x x': config c) : prop =
-  x'.ph == x.ph /\ x'.ast == x.ast /\ x'.w.cmaj == x.w.cmaj /\ x'.snap == x.snap /\ x'.allocd == x.allocd
+  x'.ph == x.ph /\ x'.ast == x.ast /\ x'.w.cmaj == x.w.cmaj /\ x'.snap == x.snap /\ x'.allocd == x.allocd /\ x'.ms == x.ms
 
 let yres_kept (y y': mheap) : prop = forall (b o: nat). resolve y b == Some o ==> resolve y' b == Some o
 

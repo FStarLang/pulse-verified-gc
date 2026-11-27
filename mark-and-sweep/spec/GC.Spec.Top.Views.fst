@@ -77,6 +77,16 @@ let ag_edge (m m': mheap) (o o': nat)
   : Lemma (requires agree m m') (ensures major_edge m o o' ==> major_edge m' o o')
   = C.forall_intro_2 (fun i a -> C.move_requires (ag_edge1 m m' o o' i) a)
 
+let ag_uedge1 (m m': mheap) (sc: scan) (o o' i a: nat)
+  : Lemma (requires agree m m' /\ ptr_field m o i /\ unscanned sc o i /\ field m o i == VPtr (Major a) /\
+                    resolve m a == Some o')
+          (ensures uedge m' sc o o')
+  = ag_hd m m' o; ag_field m m' o i; ag_resolve m m' a
+
+let ag_uedge (m m': mheap) (sc: scan) (o o': nat)
+  : Lemma (requires agree m m') (ensures uedge m sc o o' ==> uedge m' sc o o')
+  = C.forall_intro_2 (fun i a -> C.move_requires (ag_uedge1 m m' sc o o' i) a)
+
 let ag_yedge1 (m m': mheap) (o o' i a: nat)
   : Lemma (requires agree m m' /\ ptr_field m o i /\ field m o i == VPtr (Young a) /\ resolve m a == Some o')
           (ensures young_edge m' o o')
@@ -294,6 +304,19 @@ let ag_decreases (m1 m2 m1' m2': mheap) (live: nat -> prop)
                    (mark_no_increase m1 m2 live ==> mark_no_increase m1' m2' live))
   = C.forall_intro (fun (o: nat) -> ag_white_live m1 m1' live o);
     C.forall_intro (fun (o: nat) -> ag_white_live m2 m2' live o)
+
+/// The measure with the scan, read on agreeing heaps (both sides).
+let ag_fleft (m m': mheap) (sc: scan) : Lemma (requires agree m m') (ensures fleft m sc == fleft m' sc)
+  = match sc with Some (o, _) -> ag_hd m m' o | None -> ()
+
+let ag_dec (m1 m2 m1' m2': mheap) (sc sc': scan) (live: nat -> prop)
+  : Lemma (requires agree m1 m1' /\ agree m2 m2')
+          (ensures (mark_dec m1 sc m2 sc' live ==> mark_dec m1' sc m2' sc' live) /\
+                   (mark_noinc m1 sc m2 sc' live ==> mark_noinc m1' sc m2' sc' live))
+  = C.forall_intro (fun (o: nat) -> ag_white_live m1 m1' live o);
+    C.forall_intro (fun (o: nat) -> ag_white_live m2 m2' live o);
+    ag_fleft m1 m1' sc;
+    ag_fleft m2 m2' sc'
 
 /// ---------------------------------------------------------------------------
 /// Configurations

@@ -71,7 +71,7 @@ let wp_rem (#c: comps) (x: config c) (o i: nat) (v: value) (rem': list slot) (m'
 let wok (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': list slot) (m': mheap) : prop =
   rinv x /\ mutator_ok x (EWrite (Major o) i v) /\ wpost x o i v rem' m' /\
   x'.ph == x.ph /\ x'.ast == x.ast /\ x'.w.cmaj == h' /\ x'.w.crem == rem' /\ x'.w.cyng == x.w.cyng /\
-  x'.w.croots == x.w.croots /\ x'.snap == x.snap /\ x'.allocd == x.allocd /\
+  x'.w.croots == x.w.croots /\ x'.snap == x.snap /\ x'.allocd == x.allocd /\ x'.ms == x.ms /\
   c.a.inv x.ph h' x.ast /\ (forall (y: nat). c.a.free x.ast h' y == c.a.free x.ast x.w.cmaj y)
 
 let wnext (#c: comps) (x: config c) (rem': list slot) (m': mheap) : GTot world =
@@ -88,6 +88,17 @@ let w_basic (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': 
     C.forall_intro (wp_hd x o i v rem' m');
     assert (forall (y n: nat). covers m' y n == covers (mj x) y n)
 
+/// A store into field `i` of `o` leaves every other field (small context).
+let field_store (m m': mheap) (o i y j: nat) (v: value)
+  : Lemma (requires well_formed m /\ is_block m y /\ j < wz_of m y /\ is_block m o /\ i < wz_of m o /\
+                    m'.body (y + 1 + j) == (if y + 1 + j = o + 1 + i then v else m.body (y + 1 + j)))
+          (ensures m'.body (y + 1 + j) == (if y = o && j = i then v else m.body (y + 1 + j)))
+  = let n = y + 1 + j in
+    if n = o + 1 + i && not (y = o && j = i) then begin
+      assert (covers m y n); assert (covers m o n);
+      cover_unique m y o n
+    end
+
 /// Fields after the store.
 let w_field (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': list slot) (m': mheap) (y j: nat)
   : Lemma (requires wok x x' o i v h' rem' m' /\ is_block (mj x) y /\ j < wz_of (mj x) y)
@@ -95,12 +106,8 @@ let w_field (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': 
   = w_basic x x' o i v h' rem' m';
     let n = y + 1 + j in
     wp_body x o i v rem' m' n;
-    assert (field m' y j == m'.body n /\ field (mj x) y j == (mj x).body n);
-    if y = o && j = i then ()
-    else if n = o + 1 + i then begin
-      assert (covers (mj x) y n); assert (covers (mj x) o n);
-      cover_unique (mj x) y o n
-    end else ()
+    field_store (mj x) m' o i y j v;
+    assert (field m' y j == m'.body n /\ field (mj x) y j == (mj x).body n)
 
 /// Resolution is unchanged.
 let w_resolve (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': list slot) (m': mheap) (b: nat)
@@ -270,10 +277,10 @@ let w_r_young (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem'
 
 /// A block on a path: greyed by the barrier, or reached after the store.
 let greyed_or_reached (#c: comps) (x: config c) (m': mheap) (u: nat) : prop =
-  col_of m' u == Grey \/ live_reached m' (union x.snap x.allocd) u
+  col_of m' u == Grey \/ live_reached m' (scan_of x) (union x.snap x.allocd) u
 
 let rec w_lpath_rec (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': list slot) (m': mheap)
-    (u: nat) (p: lpath (mj x) (union x.snap x.allocd) u)
+    (u: nat) (p: lpath (mj x) (scan_of x) (union x.snap x.allocd) u)
   : Lemma (requires wok x x' o i v h' rem' m' /\ Marking? x.ph)
           (ensures union x.snap x.allocd u /\ greyed_or_reached x m' u) (decreases p)
   = let m = mj x in
@@ -282,35 +289,38 @@ let rec w_lpath_rec (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t)
     wp_hd x o i v rem' m' u;
     wp_col x o i v rem' m' u;
     match p with
-    | PGrey _ _ -> let q : lpath m' (union x.snap x.allocd) u = PGrey u () in ()
+    | PGrey _ _ -> let q : lpath m' (scan_of x) (union x.snap x.allocd) u = PGrey u () in ()
     | PStep y _ p0 _ ->
       w_lpath_rec x x' o i v h' rem' m' y p0;
+      uedge_major m (scan_of x) y u;
       edge_closed m (union x.snap x.allocd) y u;
       if col_of m' u = Grey then ()
       else begin
         (* a path to y after the store *)
         wp_hd x o i v rem' m' y;
         wp_col x o i v rem' m' y;
-        let py : squash (live_reached m' (union x.snap x.allocd) y) =
-          if col_of m' y = Grey then (let q : lpath m' (union x.snap x.allocd) y = PGrey y () in ()) else () in
+        let py : squash (live_reached m' (scan_of x) (union x.snap x.allocd) y) =
+          if col_of m' y = Grey then (let q : lpath m' (scan_of x) (union x.snap x.allocd) y = PGrey y () in ()) else () in
         (* the edge y -> u is not the overwritten one *)
-        eliminate exists (j a: nat). ptr_field m y j /\ field m y j == VPtr (Major a) /\ resolve m a == Some u
+        eliminate exists (j a: nat). ptr_field m y j /\ unscanned (scan_of x) y j /\ field m y j == VPtr (Major a) /\
+                                     resolve m a == Some u
         with begin
           w_field x x' o i v h' rem' m' y j;
           w_resolve x x' o i v h' rem' m' a;
           if y = o && j = i then assert (tgt x o i == Some u)
           else begin
-            assert (major_edge m' y u);
-            let q0 = FStar.IndefiniteDescription.indefinite_description_ghost (lpath m' (union x.snap x.allocd) y) (fun _ -> True) in
-            let q : lpath m' (union x.snap x.allocd) u = PStep y u q0 () in ()
+            assert (ptr_field m' y j /\ field m' y j == VPtr (Major a));
+            assert (uedge m' (scan_of x) y u);
+            let q0 = FStar.IndefiniteDescription.indefinite_description_ghost (lpath m' (scan_of x) (union x.snap x.allocd) y) (fun _ -> True) in
+            let q : lpath m' (scan_of x) (union x.snap x.allocd) u = PStep y u q0 () in ()
           end
         end
       end
 
 let w_lpath (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': list slot) (m': mheap) (u: nat)
-  : Lemma (requires wok x x' o i v h' rem' m' /\ Marking? x.ph /\ live_reached (mj x) (union x.snap x.allocd) u)
+  : Lemma (requires wok x x' o i v h' rem' m' /\ Marking? x.ph /\ live_reached (mj x) (scan_of x) (union x.snap x.allocd) u)
           (ensures greyed_or_reached x m' u)
-  = let f (p: lpath (mj x) (union x.snap x.allocd) u) : Lemma (greyed_or_reached x m' u) = w_lpath_rec x x' o i v h' rem' m' u p in
+  = let f (p: lpath (mj x) (scan_of x) (union x.snap x.allocd) u) : Lemma (greyed_or_reached x m' u) = w_lpath_rec x x' o i v h' rem' m' u p in
     C.forall_intro f
 
 let w_tri1 (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': list slot) (m': mheap) (z: nat)
@@ -326,17 +336,30 @@ let w_tri1 (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': l
 
 let w_tri4 (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': list slot) (m': mheap) (z: nat)
   : Lemma (requires wok x x' o i v h' rem' m' /\ Marking? x.ph /\ x'.snap z /\ col_of m' z == White)
-          (ensures live_reached m' (union x'.snap x'.allocd) z)
+          (ensures live_reached m' (scan_of x') (union x'.snap x'.allocd) z)
   = reveal_opaque (`%r_col) (r_col #c);
     wp_col x o i v rem' m' z;
     assert (col_of (mj x) z == White);
-    assert (live_reached (mj x) (union x.snap x.allocd) z);
+    assert (live_reached (mj x) (scan_of x) (union x.snap x.allocd) z);
     w_lpath x x' o i v h' rem' m' z;
     assert (union x'.snap x'.allocd == union x.snap x.allocd)
 
+/// The block being scanned stays a grey block: the barrier only greys.
+let w_scan (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': list slot) (m': mheap)
+  : Lemma (requires wok x x' o i v h' rem' m' /\ Marking? x.ph)
+          (ensures scan_ok x' m' /\ fleft m' (scan_of x') == fleft (mj x) (scan_of x))
+  = reveal_opaque (`%r_col) (r_col #c);
+    w_basic x x' o i v h' rem' m';
+    assert (scan_of x' == scan_of x);
+    (match scan_of x with
+     | Some (s, _) -> wp_hd x o i v rem' m' s; wp_col x o i v rem' m' s
+     | None -> wp_hd x o i v rem' m' 0);
+    fleft_same (mj x) m' (scan_of x)
+
 let w_tri (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': list slot) (m': mheap)
-  : Lemma (requires wok x x' o i v h' rem' m' /\ Marking? x.ph) (ensures tri_iu x' m')
-  = C.forall_intro (w_tri1 x x' o i v h' rem' m');
+  : Lemma (requires wok x x' o i v h' rem' m' /\ Marking? x.ph) (ensures tri_iu x' m' /\ scan_ok x' m')
+  = w_scan x x' o i v h' rem' m';
+    C.forall_intro (w_tri1 x x' o i v h' rem' m');
     C.forall_intro (C.move_requires (w_tri4 x x' o i v h' rem' m'))
 
 let w_closed1 (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': list slot) (m': mheap) (z j a: nat)
@@ -429,8 +452,9 @@ let w_meas1 (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': 
 
 let w_measure (#c: comps) (x x': config c) (o i: nat) (v: value) (h': c.t) (rem': list slot) (m': mheap)
   : Lemma (requires wok x x' o i v h' rem' m' /\ Marking? x.ph)
-          (ensures mark_no_increase (mj x) m' (live x'))
+          (ensures mark_noinc (mj x) (scan_of x) m' (scan_of x') (live x'))
   = let m = mj x in
+    w_scan x x' o i v h' rem' m';
     C.forall_intro (w_meas1 x x' o i v h' rem' m');
     match tgt x o i with
     | Some t ->

@@ -46,7 +46,7 @@ let step_ok (#c: comps) (x: config c) (e: event)
     | ERoots rs -> SMu.roots_step x rs
     | EMinor -> SMi.minor_step x
     | EStart -> SMk.start_step x
-    | ESlice -> SMk.slice_step x
+    | ESlice mvs -> SMk.slice_step x mvs
     | EHandover -> SSw.handover_step x
     | ESweep -> SSw.sweep_step x
     | EEnd -> SSw.end_step x

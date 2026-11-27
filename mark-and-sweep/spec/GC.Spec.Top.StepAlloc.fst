@@ -79,7 +79,7 @@ let al_inv (#c: comps) (x: config c) (sz: size_t) (tag: tag_t) (h': c.t) (st': c
 
 let anext (#c: comps) (x x': config c) (h'': c.t) (st': c.a.state) (o: nat) (rem': list slot) : prop =
   x'.ph == x.ph /\ x'.ast == st' /\ x'.w.cmaj == h'' /\ x'.w.crem == rem' /\ x'.w.cyng == x.w.cyng /\
-  x'.w.croots == VPtr (Major o) :: x.w.croots /\ x'.snap == x.snap /\
+  x'.w.croots == VPtr (Major o) :: x.w.croots /\ x'.snap == x.snap /\ x'.ms == x.ms /\
   (forall (p: nat). x'.allocd p <==> x.allocd p \/ p == o)
 
 /// Everything the step lemma knows.
@@ -408,7 +408,7 @@ let a_live (#c: comps) (x x': config c) (sz: size_t) (tag: tag_t) (vs: list valu
 let a_tri (#c: comps) (x x': config c) (sz: size_t) (tag: tag_t) (vs: list value) (h': c.t)
     (st': c.a.state) (o: nat) (m': mheap) (h'': c.t) (rem': list slot)
   : Lemma (requires aok x x' sz tag vs h' st' o m' h'' rem' /\ Marking? x.ph)
-          (ensures tri_iu x' (fill m' o vs))
+          (ensures tri_iu x' (fill m' o vs) /\ scan_ok x' (fill m' o vs))
   = let m = mj x in
     let m2 = fill m' o vs in
     reveal_opaque (`%r_col) (r_col #c);
@@ -428,11 +428,12 @@ let a_tri (#c: comps) (x x': config c) (sz: size_t) (tag: tag_t) (vs: list value
           a_keep x x' sz tag vs h' st' o m' h'' rem' y
         end in
     C.forall_intro lv;
-    let c4 (z: nat) : Lemma (x'.snap z /\ col_of m2 z == White ==> live_reached m2 (union x'.snap x'.allocd) z)
+    scan_keepy x x' m m2;
+    let c4 (z: nat) : Lemma (x'.snap z /\ col_of m2 z == White ==> live_reached m2 (scan_of x') (union x'.snap x'.allocd) z)
       = if FStar.IndefiniteDescription.strong_excluded_middle (x'.snap z /\ col_of m2 z == White) then begin
           reveal_opaque (`%r_live) (r_live #c);
           a_keep x x' sz tag vs h' st' o m' h'' rem' z;
-          lpath_keepy m m2 (union x.snap x.allocd) (union x'.snap x'.allocd) z
+          lpath_keepy m m2 (scan_of x) (union x.snap x.allocd) (union x'.snap x'.allocd) z
         end in
     C.forall_intro c4
 
@@ -530,7 +531,14 @@ let a_cs_mark (#c: comps) (x x': config c) (sz: size_t) (tag: tag_t) (vs: list v
     (st': c.a.state) (o: nat) (m': mheap) (h'': c.t) (rem': list slot)
   : Lemma (requires aok x x' sz tag vs h' st' o m' h'' rem')
           (ensures cs_mark x (EAlloc sz tag vs) x' (wnext x vs o m' rem'))
-  = if Marking? x.ph then C.forall_intro (C.move_requires (a_measure1 x x' sz tag vs h' st' o m' h'' rem'));
+  = if Marking? x.ph then begin
+      C.forall_intro (C.move_requires (a_measure1 x x' sz tag vs h' st' o m' h'' rem'));
+      a_basic x x' sz tag vs h' st' o m' h'' rem';
+      reveal_opaque (`%r_col) (r_col #c);
+      reveal_opaque (`%r_live) (r_live #c);
+      (match scan_of x with Some (s, _) -> a_keep x x' sz tag vs h' st' o m' h'' rem' s | None -> ());
+      fleft_keepy x (mj x) (fill m' o vs)
+    end;
     reveal_opaque (`%cs_mark) (cs_mark #c)
 
 let a_cs_alloc (#c: comps) (x x': config c) (sz: size_t) (tag: tag_t) (vs: list value) (h': c.t)

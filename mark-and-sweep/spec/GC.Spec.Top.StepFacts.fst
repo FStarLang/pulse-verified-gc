@@ -59,10 +59,11 @@ let resolve_keepy (m m2: mheap) (a y: nat)
     end
 
 /// An edge out of a kept block, to a kept block.
-let edge_keepy (m m2: mheap) (y z: nat)
-  : Lemma (requires major_edge m y z /\ keepsy m m2 y /\ keepsy m m2 z /\ unique_cover m2)
-          (ensures major_edge m2 y z)
-  = eliminate exists (i a: nat). ptr_field m y i /\ field m y i == VPtr (Major a) /\ resolve m a == Some z
+let edge_keepy (m m2: mheap) (sc: scan) (y z: nat)
+  : Lemma (requires uedge m sc y z /\ keepsy m m2 y /\ keepsy m m2 z /\ unique_cover m2)
+          (ensures uedge m2 sc y z)
+  = eliminate exists (i a: nat). ptr_field m y i /\ unscanned sc y i /\ field m y i == VPtr (Major a) /\
+                                 resolve m a == Some z
     with begin
       resolve_keepy m m2 a z;
       assert (ptr_field m2 y i /\ field m2 y i == VPtr (Major a))
@@ -74,28 +75,53 @@ let edge_closed (m: mheap) (lv: nat -> prop) (y z: nat)
   = eliminate exists (i a: nat). ptr_field m y i /\ field m y i == VPtr (Major a) /\ resolve m a == Some z
     with assert (exists (z': nat). resolve m a == Some z' /\ lv z')
 
-let rec lpath_keepy_rec (m m2: mheap) (lv lv': nat -> prop) (z: nat) (p: lpath m lv z)
+let rec lpath_keepy_rec (m m2: mheap) (sc: scan) (lv lv': nat -> prop) (z: nat) (p: lpath m sc lv z)
   : Lemma (requires closed m lv /\ (forall (y: nat). lv y ==> keepsy m m2 y /\ lv' y) /\ unique_cover m2)
-          (ensures lv z /\ live_reached m2 lv' z) (decreases p)
+          (ensures lv z /\ live_reached m2 sc lv' z) (decreases p)
   = match p with
     | PGrey _ _ ->
       keepsy_block m m2 z;
-      let q : lpath m2 lv' z = PGrey z () in ()
+      let q : lpath m2 sc lv' z = PGrey z () in ()
     | PStep y _ p0 _ ->
-      lpath_keepy_rec m m2 lv lv' y p0;
+      lpath_keepy_rec m m2 sc lv lv' y p0;
+      uedge_major m sc y z;
       edge_closed m lv y z;
-      edge_keepy m m2 y z;
+      edge_keepy m m2 sc y z;
       keepsy_block m m2 z;
-      let q0 = FStar.IndefiniteDescription.indefinite_description_ghost (lpath m2 lv' y) (fun _ -> True) in
-      let q : lpath m2 lv' z = PStep y z q0 () in ()
+      let q0 = FStar.IndefiniteDescription.indefinite_description_ghost (lpath m2 sc lv' y) (fun _ -> True) in
+      let q : lpath m2 sc lv' z = PStep y z q0 () in ()
 
 /// **Paths from a live grey block survive a step that keeps the live blocks.**
-let lpath_keepy (m m2: mheap) (lv lv': nat -> prop) (z: nat)
+let lpath_keepy (m m2: mheap) (sc: scan) (lv lv': nat -> prop) (z: nat)
   : Lemma (requires closed m lv /\ (forall (y: nat). lv y ==> keepsy m m2 y /\ lv' y) /\ unique_cover m2 /\
-                    live_reached m lv z)
-          (ensures live_reached m2 lv' z)
-  = let f (p: lpath m lv z) : Lemma (live_reached m2 lv' z) = lpath_keepy_rec m m2 lv lv' z p in
+                    live_reached m sc lv z)
+          (ensures live_reached m2 sc lv' z)
+  = let f (p: lpath m sc lv z) : Lemma (live_reached m2 sc lv' z) = lpath_keepy_rec m m2 sc lv lv' z p in
     C.forall_intro f
+
+/// The block being scanned is live, so kept: the scan stays valid.
+let scan_keepy (#c: comps) (x x': config c) (m m2: mheap)
+  : Lemma (requires scan_of x' == scan_of x /\ scan_ok x m /\
+                    (forall (y: nat). union x.snap x.allocd y ==> keepsy m m2 y /\ union x'.snap x'.allocd y))
+          (ensures scan_ok x' m2)
+  = match scan_of x with
+    | Some (o, _) -> keepsy_block m m2 o
+    | None -> ()
+
+/// ... and its measure is unchanged.
+let fleft_keepy (#c: comps) (x: config c) (m m2: mheap)
+  : Lemma (requires m2.size == m.size /\ (match scan_of x with Some (o, _) -> keepsy m m2 o | None -> True))
+          (ensures fleft m2 (scan_of x) == fleft m (scan_of x))
+  = match scan_of x with
+    | Some (o, _) -> keepsy_block m m2 o
+    | None -> ()
+
+/// The measure reads only the size and the scanned block's width.
+let fleft_same (m m': mheap) (sc: scan)
+  : Lemma (requires m'.size == m.size /\
+                    (match sc with Some (s, _) -> is_block m' s == is_block m s /\ wz_of m' s == wz_of m s | None -> True))
+          (ensures fleft m' sc == fleft m sc)
+  = ()
 
 /// A list member is at some index.
 let rec mem_index (#t: Type) (v: t) (l: list t)
@@ -179,6 +205,7 @@ let r_live_iu (#c: comps) (x x': config c) (w w': world)
 /// Outside marking, `r_col` depends only on the colours of blocks in use.
 let r_col_iu (#c: comps) (x x': config c) (w w': world)
   : Lemma (requires r_col x w /\ ~(Marking? x.ph) /\ x'.ph == x.ph /\ x'.snap == x.snap /\ x'.allocd == x.allocd /\
+                    scan_of x' == scan_of x /\
                     (forall (z: nat). iu x' w'.maj z == iu x w.maj z /\ (iu x w.maj z ==> col_of w'.maj z == col_of w.maj z)))
           (ensures r_col x' w')
   = reveal_opaque (`%r_col) (r_col #c);

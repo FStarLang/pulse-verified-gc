@@ -9,7 +9,9 @@
 ///     snapshot, so the allocator's invariant moves through `inv_frame` and
 ///     frees nothing.  The snapshot is closed: the pointer fields of a
 ///     reachable block resolve to reachable blocks.
-///   - `ESlice`: the same, with the tricolour invariant of the cycle.
+///   - `ESlice mvs`: each move keeps the marking invariant with the scan
+///     (`GC.Spec.Top.MarkMoves`), so the slice does, and decreases the
+///     measure.
 ///
 /// Both use `darken_only` (G50, and G52: only blocks change colour,
 /// design doc §16.10) to meet `inv_frame_rel`.
@@ -27,6 +29,7 @@ open GC.Spec.Top.StepBase
 open GC.Spec.Top.StepSweep
 module L = FStar.List.Tot
 module C = FStar.Classical
+module MM = GC.Spec.Top.MarkMoves
 
 #set-options "--fuel 1 --ifuel 1 --z3rlimit 20"
 
@@ -131,7 +134,7 @@ let snap_closed (#c: comps) (x: config c) (m': mheap)
 
 let start_next (#c: comps) (x x': config c) (h': c.t) : prop =
   x'.ph == Marking /\ x'.ast == x.ast /\ x'.w.cmaj == h' /\ x'.snap == reachable (vw x) /\
-  (forall (o: nat). ~(x'.allocd o))
+  (forall (o: nat). ~(x'.allocd o)) /\ scan_of x' == None
 
 let st_reach1 (#c: comps) (x x': config c) (h': c.t) (m': mheap) (o: nat)
   : Lemma (requires rinv x /\ start_next x x' h' /\ colours_only (mj x) m' /\
@@ -256,61 +259,81 @@ let sl_live1 (#c: comps) (x x': config c) (h': c.t) (m': mheap) (o: nat)
           (ensures iu x' m' o)
   = reveal_opaque (`%r_live) (r_live #c)
 
+/// The marking invariant of the run, on the model with the scan.
+let minv_of (#c: comps) (x: config c)
+  : Lemma (requires has_view x /\ Marking? x.ph /\ free_white_at c.r c.a x.ph x.w.cmaj x.ast /\
+                    c.a.inv x.ph x.w.cmaj x.ast /\ r_heap x (vw x) /\ r_col x (vw x))
+          (ensures MM.minv (mj x) (scan_of x) x.snap x.allocd)
+  = marking_tricolour x;
+    reveal_opaque (`%r_heap) (r_heap #c);
+    reveal_opaque (`%r_col) (r_col #c)
+
+/// The allocator's invariant through a slice.
+let sl_frame (#c: comps) (x: config c) (h': c.t) (m': mheap)
+  : Lemma (requires rinv x /\ Marking? x.ph /\ colours_only (mj x) m' /\ darken_only (mj x) m' /\
+                    (forall (o: nat). is_block m' o /\ dark (col_of m' o) ==> union x.snap x.allocd o))
+          (ensures inv_frame_rel c.a Marking x.ast x.w.cmaj (mj x) m')
+  = reveal_opaque (`%r_live) (r_live #c);
+    assert (forall (o: nat). union x.snap x.allocd o ==> in_use_c x o);
+    mark_frame x h' m' (union x.snap x.allocd)
+
 let sl_inv (#c: comps) (x x': config c) (h': c.t) (m': mheap)
-  : Lemma (requires rinv x /\ Marking? x.ph /\ slice_next x x' h' /\ mark_slice_post x.snap x.allocd (mj x) m' /\
-                    c.a.inv Marking h' x.ast /\
+  : Lemma (requires rinv x /\ Marking? x.ph /\ slice_next x x' h' /\ MM.minv m' (scan_of x') x.snap x.allocd /\
+                    colours_only (mj x) m' /\ c.a.inv Marking h' x.ast /\
                     (forall (o: nat). c.a.free x.ast h' o == c.a.free x.ast x.w.cmaj o))
           (ensures r_heap x' ({ vw x with maj = m' }) /\ r_col x' ({ vw x with maj = m' }) /\
                    r_live x' ({ vw x with maj = m' }))
   = let w' = { vw x with maj = m' } in
     reveal_opaque (`%r_heap) (r_heap #c);
-    colours_wf (mj x) m';
     assert (x'.ph == Marking);
     assert (r_heap x' w');
+    let lv (o: nat) : Lemma (union x.snap x.allocd o <==> live x' o) = () in
+    C.forall_intro lv;
+    assert (tri_iu x' m');
+    assert (scan_ok x' m');
+    assert (closed m' (union x'.snap x'.allocd));
     reveal_opaque (`%r_col) (r_col #c);
-    marking_closed x;
-    colours_closed (mj x) m' (union x.snap x.allocd);
-    tri_of_tricolour x' m';
     assert (r_col x' w');
     C.forall_intro (C.move_requires (sl_live1 x x' h' m'));
     reveal_opaque (`%r_live) (r_live #c);
     assert (r_live x' w')
 
-let sl_cs (#c: comps) (x x': config c) (h': c.t) (m': mheap)
-  : Lemma (requires rinv x /\ Marking? x.ph /\ slice_next x x' h' /\ mark_slice_post x.snap x.allocd (mj x) m' /\
+let sl_cs (#c: comps) (x x': config c) (mvs: list move) (h': c.t) (m': mheap)
+  : Lemma (requires rinv x /\ Marking? x.ph /\ slice_next x x' h' /\ colours_only (mj x) m' /\
+                    mark_dec (mj x) (scan_of x) m' (scan_of x') (union x.snap x.allocd) /\
                     (forall (o: nat). c.a.free x.ast h' o == c.a.free x.ast x.w.cmaj o))
           (ensures (let w' = { vw x with maj = m' } in
-                    cs_keep x ESlice x' w' /\ cs_alloc x ESlice x' w' /\ cs_words x ESlice x' w' /\
-                    cs_mark x ESlice x' w' /\ cs_old x ESlice x' /\ cs_cyc x x' w'))
+                    cs_keep x (ESlice mvs) x' w' /\ cs_alloc x (ESlice mvs) x' w' /\ cs_words x (ESlice mvs) x' w' /\
+                    cs_mark x (ESlice mvs) x' w' /\ cs_old x (ESlice mvs) x' /\ cs_cyc x x' w'))
   = let w' = { vw x with maj = m' } in
     reveal_opaque (`%r_heap) (r_heap #c);
-    keep_cs x ESlice x' w';
+    keep_cs x (ESlice mvs) x' w';
     reveal_opaque (`%cs_alloc) (cs_alloc #c);
     let lv (o: nat) : Lemma (union x.snap x.allocd o <==> live x' o) = () in
     C.forall_intro lv;
-    assert (mark_decreases (mj x) m' (live x'));
+    assert (mark_dec (mj x) (scan_of x) m' (scan_of x') (live x'));
     reveal_opaque (`%cs_mark) (cs_mark #c);
-    C.forall_intro (C.move_requires (colours_word x ESlice x' w'));
+    C.forall_intro (C.move_requires (colours_word x (ESlice mvs) x' w'));
     reveal_opaque (`%cs_words) (cs_words #c);
     cyc_same x x' w'
 
 #push-options "--z3rlimit 40"
-let slice_step (#c: comps) (x: config c)
-  : Lemma (requires faithful c.r /\ rinv x /\ hyps_at c x ESlice /\ enabled c x ESlice)
-          (ensures (let x' = step c x ESlice in rinv x' /\ concl_step x ESlice x' /\ rback x x' /\ cyc x x'))
-  = let e = ESlice in
+let slice_step (#c: comps) (x: config c) (mvs: list move)
+  : Lemma (requires faithful c.r /\ rinv x /\ hyps_at c x (ESlice mvs) /\ enabled c x (ESlice mvs))
+          (ensures (let x' = step c x (ESlice mvs) in rinv x' /\ concl_step x (ESlice mvs) x' /\ rback x x' /\ cyc x x'))
+  = let e = ESlice mvs in
     let x' = step c x e in
     let w = vw x in
     let m = w.maj in
     vw_views x;
     reveal_opaque (`%r_heap) (r_heap #c);
-    marking_tricolour x;
-    assert (mark_slice_pre x.snap x.allocd m);
-    let h' = c.m.mslice x.w.cmaj in
-    let m' = FStar.IndefiniteDescription.indefinite_description_ghost mheap
-               (fun m' -> c.r.repr m' h' /\ mark_slice_post x.snap x.allocd m m') in
-    reveal_opaque (`%r_live) (r_live #c);
-    mark_frame x h' m' (union x.snap x.allocd);
+    minv_of x;
+    MM.moves_inv m (scan_of x) x.snap x.allocd mvs;
+    MM.moves_repr c.r c.m x.w.cmaj x.ms mvs m x.snap x.allocd;
+    let (h', ms') = mmoves c.m x.w.cmaj x.ms mvs in
+    let (m', sc') = MM.mfold m (scan_of x) mvs in
+    assert (c.r.repr m' h' /\ scan_of x' == sc');
+    sl_frame x h' m';
     assert (inv_frame_m c.a Marking x.w.cmaj x.ast h' m m');
     assert (c.a.inv Marking h' x.ast /\ (forall (o: nat). c.a.free x.ast h' o == c.a.free x.ast x.w.cmaj o));
     assert (slice_next x x' h');
@@ -319,6 +342,6 @@ let slice_step (#c: comps) (x: config c)
     sl_heap_ok x x' h' m';
     heap_step x x' w';
     sl_inv x x' h' m';
-    sl_cs x x' h' m';
+    sl_cs x x' mvs h' m';
     step_out_intro x e x' w'
 #pop-options

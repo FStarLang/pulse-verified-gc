@@ -235,7 +235,7 @@ let sw_word (#c: comps) (x: config c) (p p': c.k.progress) (h': c.t) (st': c.a.s
 
 /// The configuration after the step.
 let sw_next (#c: comps) (x x': config c) (p': c.k.progress) (h': c.t) (st': c.a.state) : prop =
-  x'.ph == Sweeping p' /\ x'.ast == st' /\ x'.w.cmaj == h' /\ x'.snap == x.snap /\ x'.allocd == x.allocd
+  x'.ph == Sweeping p' /\ x'.ast == st' /\ x'.w.cmaj == h' /\ x'.snap == x.snap /\ x'.allocd == x.allocd /\ x'.ms == x.ms
 
 let sw_reach1 (#c: comps) (x x': config c) (p p': c.k.progress) (h': c.t) (st': c.a.state) (res: step_result)
     (m': mheap) (o: nat)

@@ -94,8 +94,8 @@ let cs_words (#c: comps) (x: config c) (e: event) (x': config c) (w': world) : p
 [@@"opaque_to_smt"]
 let cs_mark (#c: comps) (x: config c) (e: event) (x': config c) (w': world) : prop =
   Marking? x.ph /\ Marking? x'.ph ==>
-    (ESlice? e ==> mark_decreases (mj x) w'.maj (live x')) /\
-    (~(ESlice? e) ==> mark_no_increase (mj x) w'.maj (live x'))
+    (ESlice? e ==> mark_dec (mj x) (scan_of x) w'.maj (scan_of x') (live x')) /\
+    (~(ESlice? e) ==> mark_noinc (mj x) (scan_of x) w'.maj (scan_of x') (live x'))
 
 /// No object in use before the step becomes reachable (what (3c) needs).
 [@@"opaque_to_smt"]
@@ -180,7 +180,7 @@ let ag_cs_mark (#c: comps) (x: config c) (e: event) (x': config c) (w1 w2: world
   : Lemma (requires agree w1.maj w2.maj /\ cs_mark x e x' w1) (ensures cs_mark x e x' w2)
   = reveal_opaque (`%cs_mark) (cs_mark #c);
     agree_refl (mj x);
-    ag_decreases (mj x) w1.maj (mj x) w2.maj (live x')
+    ag_dec (mj x) w1.maj (mj x) w2.maj (scan_of x) (scan_of x') (live x')
 
 let ag_rback (#c: comps) (x: config c) (w1 w2: world)
   : Lemma (requires wagree w1 w2 /\ rback_w x w1) (ensures rback_w x w2)
@@ -206,8 +206,8 @@ let words_concl (#c: comps) (x: config c) (e: event) (x': config c) (n: nat)
 let mark_concl (#c: comps) (x: config c) (e: event) (x': config c)
   : Lemma (requires cs_mark x e x' (vw x'))
           (ensures Marking? x.ph /\ Marking? x'.ph ==>
-                     (ESlice? e ==> mark_decreases (mj x) (mj x') (live x')) /\
-                     (~(ESlice? e) ==> mark_no_increase (mj x) (mj x') (live x')))
+                     (ESlice? e ==> mark_dec (mj x) (scan_of x) (mj x') (scan_of x') (live x')) /\
+                     (~(ESlice? e) ==> mark_noinc (mj x) (scan_of x) (mj x') (scan_of x') (live x')))
   = reveal_opaque (`%cs_mark) (cs_mark #c)
 
 let concl_of_cs (#c: comps) (x: config c) (e: event) (x': config c)
@@ -273,7 +273,7 @@ let cyc_agree (#c: comps) (x x': config c) (w': world)
 /// A step that leaves the major heap's model and the allocator alone.
 let same_major (#c: comps) (x x': config c) (w': world) : prop =
   x'.ph == x.ph /\ x'.ast == x.ast /\ x'.w.cmaj == x.w.cmaj /\ x'.snap == x.snap /\ x'.allocd == x.allocd /\
-  agree (mj x) w'.maj
+  x'.ms == x.ms /\ agree (mj x) w'.maj
 
 let same_iu (#c: comps) (x x': config c) (w': world) (o: nat)
   : Lemma (requires same_major x x' w') (ensures iu x' w'.maj o == in_use_c x o /\
@@ -290,6 +290,7 @@ let same_keep1 (#c: comps) (x: config c) (e: event) (x': config c) (w': world) (
 let same_mark (#c: comps) (x: config c) (e: event) (x': config c) (w': world)
   : Lemma (requires same_major x x' w' /\ ~(ESlice? e)) (ensures cs_mark x e x' w')
   = C.forall_intro (fun (o: nat) -> ag_white_live (mj x) w'.maj (live x') o);
+    ag_fleft (mj x) w'.maj (scan_of x);
     reveal_opaque (`%cs_mark) (cs_mark #c)
 
 let same_word1 (#c: comps) (x: config c) (e: event) (x': config c) (w': world) (n: nat)

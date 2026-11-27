@@ -118,7 +118,7 @@ let mok (#c: comps) (x x': config c) (hc': c.t) (st': c.a.state) (roots': list v
     (m': mheap) : prop =
   rinv x /\ mpost x hc' st' roots' fwd m' /\
   x'.ph == x.ph /\ x'.ast == st' /\ x'.w.cmaj == hc' /\ x'.w.croots == roots' /\ x'.w.crem == [] /\
-  x'.snap == x.snap /\ (forall (p: nat). x'.allocd p <==> x.allocd p \/ is_copy fwd p)
+  x'.snap == x.snap /\ x'.ms == x.ms /\ (forall (p: nat). x'.allocd p <==> x.allocd p \/ is_copy fwd p)
 
 let wnext (#c: comps) (x: config c) (fwd: nat -> option nat) (m': mheap) : GTot world =
   { maj = m'; yng = empty_heap (vw x).yng.size; roots = L.map (fwdv (vw x).yng fwd) (vw x).roots; rem = [] }
@@ -559,7 +559,7 @@ let n_col_idle (#c: comps) (x x': config c) (hc': c.t) (st': c.a.state) (roots':
 
 let n_tri (#c: comps) (x x': config c) (hc': c.t) (st': c.a.state) (roots': list value)
     (fwd: nat -> option nat) (m': mheap)
-  : Lemma (requires mok x x' hc' st' roots' fwd m' /\ Marking? x.ph) (ensures tri_iu x' m')
+  : Lemma (requires mok x x' hc' st' roots' fwd m' /\ Marking? x.ph) (ensures tri_iu x' m' /\ scan_ok x' m')
   = let m = mj x in
     n_wf x x' hc' st' roots' fwd m';
     C.forall_intro (C.move_requires (n_live x x' hc' st' roots' fwd m'));
@@ -583,11 +583,12 @@ let n_tri (#c: comps) (x x': config c) (hc': c.t) (st': c.a.state) (roots': list
         end in
     C.forall_intro lv;
     reveal_opaque (`%r_col) (r_col #c);
-    let c4 (z: nat) : Lemma (x'.snap z /\ col_of m' z == White ==> live_reached m' (union x'.snap x'.allocd) z)
+    scan_keepy x x' m m';
+    let c4 (z: nat) : Lemma (x'.snap z /\ col_of m' z == White ==> live_reached m' (scan_of x') (union x'.snap x'.allocd) z)
       = if FStar.IndefiniteDescription.strong_excluded_middle (x'.snap z /\ col_of m' z == White) then begin
           n_live_lt x z;
           n_keepsy x x' hc' st' roots' fwd m' z;
-          lpath_keepy m m' (union x.snap x.allocd) (union x'.snap x'.allocd) z
+          lpath_keepy m m' (scan_of x) (union x.snap x.allocd) (union x'.snap x'.allocd) z
         end in
     C.forall_intro c4
 
@@ -678,7 +679,13 @@ let n_cs (#c: comps) (x x': config c) (hc': c.t) (st': c.a.state) (roots': list 
     reveal_opaque (`%cs_alloc) (cs_alloc #c);
     C.forall_intro (C.move_requires (n_word x x' hc' st' roots' fwd m'));
     reveal_opaque (`%cs_words) (cs_words #c);
-    (if Marking? x.ph then C.forall_intro (C.move_requires (n_measure1 x x' hc' st' roots' fwd m')));
+    (if Marking? x.ph then begin
+      C.forall_intro (C.move_requires (n_measure1 x x' hc' st' roots' fwd m'));
+      n_wf x x' hc' st' roots' fwd m';
+      reveal_opaque (`%r_col) (r_col #c);
+      (match scan_of x with Some (s, _) -> (n_live_lt x s; n_keepsy x x' hc' st' roots' fwd m' s) | None -> ());
+      fleft_keepy x (mj x) m'
+    end);
     reveal_opaque (`%cs_mark) (cs_mark #c);
     C.forall_intro (mp_fwd x hc' st' roots' fwd m')
 
@@ -746,7 +753,7 @@ let minor_next (#c: comps) (x: config c) (hc': c.t) (st': c.a.state) (roots': li
   : Lemma (requires c.n.collect x.ph x.ast x.w == Done hc' st' roots' fwd)
           (ensures (let x' = step c x EMinor in
                     x'.ph == x.ph /\ x'.ast == st' /\ x'.w.cmaj == hc' /\ x'.w.croots == roots' /\ x'.w.crem == [] /\
-                    x'.w.cyng == c.r.yreset x.w.cyng /\ x'.snap == x.snap /\
+                    x'.w.cyng == c.r.yreset x.w.cyng /\ x'.snap == x.snap /\ x'.ms == x.ms /\
                     (forall (p: nat). x'.allocd p <==> x.allocd p \/ is_copy fwd p)))
   = ()
 

@@ -4047,3 +4047,119 @@ sweep only after step 4.  For step 4, the start wrapper runs a minor
 collection first (the user's plan): the remembered set is then empty at
 `EStart`, the one event that can break `rem_ok` (above), and the nursery is
 empty, which akhil's `start_cycle` asks for.
+
+### 18.9 Open issue: the native nursery's layout (U2)
+
+Established 2026-11-27 (no change made yet).
+
+- **Stock 4.14.2** (`ocaml-4.14-unchanged`, tag 4.14.2, unmodified):
+  - the nursery is carved top-down: blocks are taken from
+    `young_alloc_end` downwards (`runtime/minor_gc.c` 42-44, 49);
+    `Alloc_small` decrements `young_ptr`, calls
+    `caml_alloc_small_dispatch` when it passes `young_limit`, then writes
+    the header at the new `young_ptr` (`runtime/caml/memory.h` 220-235);
+  - native code reserves the same way; the header and fields are stored
+    right after the reservation, from values computed before it
+    (`asmcomp/selectgen.ml` 724-734, `emit_stores` 988), and a combined
+    allocation reserves several blocks at once only across instructions
+    with no call, no allocation and no poll (`asmcomp/comballoc.ml` 33-69),
+    so every reserved block has its header before any collection can run;
+  - when the limit check fails, `caml_garbage_collection`
+    (`runtime/signals_nat.c` 61-99) passes the whole size to
+    `caml_alloc_small_dispatch`, which first undoes the reservation
+    (`minor_gc.c` 514), collects if needed (538-539), then redoes it
+    (543); memprof's callbacks run with the reservation undone
+    (`memprof.c` 859-861);
+  - stock's minor collection never walks the nursery: it follows roots and
+    the ref table; it only asserts that `young_ptr` is at a header when
+    the nursery is not empty (`minor_gc.c` 361-362) and clears the arena
+    under `DEBUG` (443-448).
+  
+  So at every minor collection the blocks are one contiguous run of headed
+  blocks from `young_ptr` to `young_alloc_end`, walkable header by header.
+- **Our runtime, native code**: compiled code and C's `Alloc_small` keep
+  stock's top-down reservation (`runtime_gen.patch`, `memory.h` under
+  `NATIVE_CODE`); the bridge sets `bump_ref` to the bytes used
+  (`alloc_gen.c` 1237-1243) and passes the nursery from its base, offset 0.
+  akhil's precondition (`minor_wf`: the chain from offset 0 to `bump`,
+  `minor_chain_valid`, which fails at a zero header) reads the region
+  below the blocks, so it is false, or holds of memory that is not the
+  blocks.  Checked on real runs (scratch copy of the runtime, a walk at
+  every native collection): 10 native tests, 3606 non-empty collections;
+  the walk from `young_ptr` to the end met a header chain landing exactly
+  on the end every time, with no infix header on it; the walk from offset 0
+  to the used bytes failed in most collections and, where it passed, walked
+  memory that holds no live block.  So native runs are outside the
+  verified minor collection's precondition; bytecode, which allocates
+  bottom-up through `bump_ref`, is inside it.
+- **The fix proposed (trusted C bridge only; no change to akhil's modules
+  or anyone else's)**: give the verified collection, for its duration, the
+  nursery as the run of blocks: base `young_ptr` (less a padding block),
+  size and `bump` the bytes used (plus the padding), with
+  `minor_base_addr` and `minor_heap_size_u64` set to them and
+  `krmlinit_globals ()` re-run; restore all of them after.  The padding: a
+  single dead block of a no-scan tag just below `young_ptr`, so the size
+  meets the interface's own conditions on `minor_heap_size`
+  (`(max_young_wosize + 1) * 8 <= minor_heap_size` with OCaml's 256, and
+  `32 <= minor_heap_size`).  Then the precondition's walk from offset 0 is
+  the padding block followed by the program's blocks, and lands on `bump`.
+  Pending approval.
+
+### 18.10 U1: the mark's moves (checkpoint 1: contract, run, run invariant, `gc_correct`)
+
+Approved 2026-11-27: the slice event carries its moves, `Run.step` stays a
+function, and clause (6) is restated per move.  Checkpoint 1, built
+2026-11-27, uncommitted.
+
+- **Contract** (`Iface`): the mark is `{ mstate; mscan; mnone; mstart;
+  mmove }`; `mscan` reads the state as a scan (`option (block, next
+  field)`), `mnone` is a state whose scan is `None` (refined in the type, so
+  the run's start needs no extra obligation).  The moves are akhil's:
+  `MBegin o` (start scanning a grey scannable block when none is being
+  scanned), `MGrey` (scan the next field: its target greyed if white),
+  `MBlack o` (blacken a grey block with no field left to scan).  The model
+  of a move is `move_ok`/`move_heap`/`move_scan`; `mark_ok` asks, besides
+  the start, `mark_move_at` for every heap, state and move: a move the
+  model allows (on a well-formed model heap) is the model's move on every
+  model heap representing the code's heap, and the new state reads as the
+  model's new scan.  `mark_slice_at` is gone (`mark_slice_pre/post` stay as
+  definitions).
+- **Run**: `ESlice mvs`; `step` folds `mmove` (`mmoves`); enabled when
+  marking, `mvs` non-empty and `moves_ok` on the model with the current
+  scan; `EHandover` also needs no block being scanned.  The hypotheses at
+  a slice are `moves_at` (the contract at each move) and the allocator's
+  frame over the whole slice.
+- **Clause (6)** is now lexicographic in (white live blocks, grey live
+  blocks, `fleft`), where `fleft` is the fields the block being scanned has
+  left (`size + 1` when none is): a slice strictly decreases it
+  (`mark_dec`), no other event increases it (`mark_noinc`).  `fleft` reads
+  a width only at a block (under the run invariant the scanned address is
+  one, so this changes nothing there; it makes the measure agree across
+  model heaps that agree).
+- **Run invariant**: paths for the snapshot (`lpath`) follow only fields
+  still to scan (`uedge`, akhil's `marker_will_reach`/`weak_tri_color`
+  shape), so blackening a block whose fields are all scanned loses no
+  path, and a store into an already-scanned field needs nothing new;
+  `r_col` adds, while marking, that the block being scanned is a live grey
+  scannable block with the scan within its fields (`scan_ok`), and no scan
+  outside marking.
+- **New module** `GC.Spec.Top.MarkMoves`: `minv` (the marking invariant on
+  the model with the scan, over all blocks); each move keeps it, changes
+  colours only, only darkens and strictly decreases the measure
+  (`move_inv`); so does a non-empty list (`moves_inv`); `moves_repr`
+  follows the contract along a slice.
+- **Proof changes** (no change to statements outside the above): the
+  frames of the other steps carry the mark state unchanged
+  (`same_major`, `same_cfg`, `sw_next`, `anext`, `mok`, `wok`;
+  `start_next` gives the empty scan); allocation, the barrier and the
+  minor collection keep the scanned block (it is live) and so `scan_ok`
+  and `fleft` (`scan_keepy`, `fleft_keepy`, `fleft_same`); the barrier's
+  path proof follows unscanned edges.
+
+Checked (no `--retry`, seeds 0, 1, 2): `Iface`, `Words`, `Run`, `Views`,
+`RunFacts`, `RInv`, `StepBase`, `StepFacts`, `StepMut`, `StepSweep`,
+`StepAlloc`, `StepWrite`, `StepMinor`, `MarkMoves`, `StepMark`, `Point`,
+`Cycle`, `TwoCycles`, `Correct` (`gc_correct`).  Not yet rechecked:
+T1 and T2 (checkpoint 2: `Stw`, `StwBuild`, `T1*`, `TrMinB`, `T2`), and the
+instances and witness runs (checkpoint 3: `ByteMark`, `ToyMark`,
+`Vacuity`, `PW*`, `FFW*`, the code wrappers).

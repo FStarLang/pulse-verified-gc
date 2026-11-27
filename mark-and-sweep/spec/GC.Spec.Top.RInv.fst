@@ -71,13 +71,22 @@ let col_sweep (#c: comps) (x: config c) (p: c.k.progress) (m: mheap) (o: nat) : 
   col_of m o <> Grey /\ (col_of m o == Black ==> live x o) /\
   (live x o /\ c.k.unswept p o == true ==> col_of m o == Black)
 
-/// A path from a *live* grey block through white ones.
-noeq type lpath (m: mheap) (lv: nat -> prop) : nat -> Type0 =
-  | PGrey : g:nat -> squash (is_block m g /\ col_of m g == Grey /\ lv g) -> lpath m lv g
-  | PStep : o:nat -> o':nat -> lpath m lv o ->
-            squash (major_edge m o o' /\ is_block m o' /\ col_of m o' == White) -> lpath m lv o'
+/// A path from a *live* grey block through white ones, along edges the mark
+/// has still to scan (design doc §18, U1: a scanned field of the block being
+/// scanned does not count; akhil's `marker_will_reach`).
+noeq type lpath (m: mheap) (sc: scan) (lv: nat -> prop) : nat -> Type0 =
+  | PGrey : g:nat -> squash (is_block m g /\ col_of m g == Grey /\ lv g) -> lpath m sc lv g
+  | PStep : o:nat -> o':nat -> lpath m sc lv o ->
+            squash (uedge m sc o o' /\ is_block m o' /\ col_of m o' == White) -> lpath m sc lv o'
 
-let live_reached (m: mheap) (lv: nat -> prop) (o: nat) : prop = exists (_: lpath m lv o). True
+let live_reached (m: mheap) (sc: scan) (lv: nat -> prop) (o: nat) : prop = exists (_: lpath m sc lv o). True
+
+/// The block being scanned: a live grey scannable block, the scan within its
+/// fields.
+let scan_ok (#c: comps) (x: config c) (m: mheap) : prop =
+  match scan_of x with
+  | Some (o, i) -> is_block m o /\ col_of m o == Grey /\ scannable (tag_of m o) /\ live x o /\ i <= wz_of m o
+  | None -> True
 
 /// The tricolour invariant over the blocks in use.  The contracts of the
 /// allocator and the minor collection leave the colours of free blocks
@@ -87,14 +96,14 @@ let tri_iu (#c: comps) (x: config c) (m: mheap) : prop =
   (forall (o: nat). live x o ==> is_block m o) /\
   (forall (o: nat). iu x m o /\ dark (col_of m o) ==> live x o) /\
   (forall (o: nat). x.allocd o ==> col_of m o == Black) /\
-  (forall (o: nat). x.snap o /\ col_of m o == White ==> live_reached m (union x.snap x.allocd) o)
+  (forall (o: nat). x.snap o /\ col_of m o == White ==> live_reached m (scan_of x) (union x.snap x.allocd) o)
 
 [@@"opaque_to_smt"]
 let r_col (#c: comps) (x: config c) (w: world) : prop =
   match x.ph with
-  | Idle -> forall (o: nat). iu x w.maj o ==> not (dark (col_of w.maj o))
-  | Marking -> tri_iu x w.maj /\ closed w.maj (union x.snap x.allocd)
-  | Sweeping p -> forall (o: nat). iu x w.maj o ==> col_sweep x p w.maj o
+  | Idle -> (forall (o: nat). iu x w.maj o ==> not (dark (col_of w.maj o))) /\ scan_of x == None
+  | Marking -> tri_iu x w.maj /\ closed w.maj (union x.snap x.allocd) /\ scan_ok x w.maj
+  | Sweeping p -> (forall (o: nat). iu x w.maj o ==> col_sweep x p w.maj o) /\ scan_of x == None
 
 [@@"opaque_to_smt"]
 let r_live (#c: comps) (x: config c) (w: world) : prop =
@@ -171,35 +180,37 @@ let ag_r_young (#c: comps) (x: config c) (w w': world)
   = C.forall_intro_3 (fun o i b -> C.move_requires (ag_young1 x w w' o i) b);
     reveal_opaque (`%r_young) (r_young #c)
 
-let rec ag_lpath (m m': mheap) (lv: nat -> prop) (o: nat) (p: lpath m lv o)
-  : Lemma (requires agree m m') (ensures live_reached m' lv o) (decreases p)
+let rec ag_lpath (m m': mheap) (sc: scan) (lv: nat -> prop) (o: nat) (p: lpath m sc lv o)
+  : Lemma (requires agree m m') (ensures live_reached m' sc lv o) (decreases p)
   = match p with
     | PGrey _ _ ->
       ag_hd m m' o;
-      let p' : lpath m' lv o = PGrey o () in ()
+      let p' : lpath m' sc lv o = PGrey o () in ()
     | PStep y _ p0 _ ->
-      ag_lpath m m' lv y p0;
-      ag_edge m m' y o;
+      ag_lpath m m' sc lv y p0;
+      ag_uedge m m' sc y o;
       ag_hd m m' o;
-      let p0' = FStar.IndefiniteDescription.indefinite_description_ghost (lpath m' lv y) (fun _ -> True) in
-      let p' : lpath m' lv o = PStep y o p0' () in ()
+      let p0' = FStar.IndefiniteDescription.indefinite_description_ghost (lpath m' sc lv y) (fun _ -> True) in
+      let p' : lpath m' sc lv o = PStep y o p0' () in ()
 
-let ag_live_reached (m m': mheap) (lv: nat -> prop) (o: nat)
-  : Lemma (requires agree m m') (ensures live_reached m lv o ==> live_reached m' lv o)
-  = let f (p: lpath m lv o) : Lemma (live_reached m' lv o) = ag_lpath m m' lv o p in
+let ag_live_reached (m m': mheap) (sc: scan) (lv: nat -> prop) (o: nat)
+  : Lemma (requires agree m m') (ensures live_reached m sc lv o ==> live_reached m' sc lv o)
+  = let f (p: lpath m sc lv o) : Lemma (live_reached m' sc lv o) = ag_lpath m m' sc lv o p in
     C.forall_intro f
 
 let ag_tri_iu (#c: comps) (x: config c) (m m': mheap)
   : Lemma (requires agree m m' /\ tri_iu x m) (ensures tri_iu x m')
   = C.forall_intro (fun (o: nat) -> ag_hd m m' o);
     C.forall_intro (C.move_requires (ag_iu x m m'));
-    C.forall_intro (C.move_requires (ag_live_reached m m' (union x.snap x.allocd)))
+    C.forall_intro (C.move_requires (ag_live_reached m m' (scan_of x) (union x.snap x.allocd)))
 
 let ag_r_col (#c: comps) (x: config c) (w w': world)
   : Lemma (requires wagree w w' /\ r_col x w) (ensures r_col x w')
   = reveal_opaque (`%r_col) (r_col #c);
     match x.ph with
-    | Marking -> ag_tri_iu x w.maj w'.maj; ag_closed w.maj w'.maj (union x.snap x.allocd)
+    | Marking ->
+      ag_tri_iu x w.maj w'.maj; ag_closed w.maj w'.maj (union x.snap x.allocd);
+      (match scan_of x with Some (o, _) -> ag_hd w.maj w'.maj o | None -> ())
     | _ -> C.forall_intro (C.move_requires (ag_iu x w.maj w'.maj))
 
 let ag_r_live (#c: comps) (x: config c) (w w': world)
@@ -221,46 +232,57 @@ let rinv_intro (#c: comps) (x: config c) (w: world)
 /// The tricolour invariant, over blocks in use and over all blocks
 /// ---------------------------------------------------------------------------
 
-let rec lpath_wpath (m: mheap) (lv: nat -> prop) (o: nat) (p: lpath m lv o)
+/// An edge still to scan is an edge.
+let uedge_major (m: mheap) (sc: scan) (o o': nat) : Lemma (requires uedge m sc o o') (ensures major_edge m o o')
+  = ()
+
+/// With nothing being scanned, every edge is still to scan.
+let major_uedge (m: mheap) (o o': nat) : Lemma (requires major_edge m o o') (ensures uedge m None o o')
+  = ()
+
+let rec lpath_wpath (m: mheap) (sc: scan) (lv: nat -> prop) (o: nat) (p: lpath m sc lv o)
   : Lemma (ensures grey_reached m o) (decreases p)
   = match p with
     | PGrey _ _ -> let q : wpath m o = WGrey o () in ()
     | PStep y _ p0 _ ->
-      lpath_wpath m lv y p0;
+      lpath_wpath m sc lv y p0;
+      uedge_major m sc y o;
       let q0 = FStar.IndefiniteDescription.indefinite_description_ghost (wpath m y) (fun _ -> True) in
       let q : wpath m o = WStep y o q0 () in ()
 
 let rec wpath_lpath (m: mheap) (snap allocd: nat -> prop) (lv: nat -> prop) (o: nat) (p: wpath m o)
   : Lemma (requires tricolour m snap allocd /\ (forall (z: nat). snap z \/ allocd z ==> lv z))
-          (ensures live_reached m lv o) (decreases p)
+          (ensures live_reached m None lv o) (decreases p)
   = match p with
-    | WGrey _ _ -> let q : lpath m lv o = PGrey o () in ()
+    | WGrey _ _ -> let q : lpath m None lv o = PGrey o () in ()
     | WStep y _ p0 _ ->
       wpath_lpath m snap allocd lv y p0;
-      let q0 = FStar.IndefiniteDescription.indefinite_description_ghost (lpath m lv y) (fun _ -> True) in
-      let q : lpath m lv o = PStep y o q0 () in ()
+      major_uedge m y o;
+      let q0 = FStar.IndefiniteDescription.indefinite_description_ghost (lpath m None lv y) (fun _ -> True) in
+      let q : lpath m None lv o = PStep y o q0 () in ()
 
 let reached_live (m: mheap) (snap allocd lv: nat -> prop) (o: nat)
   : Lemma (requires tricolour m snap allocd /\ (forall (z: nat). snap z \/ allocd z ==> lv z))
-          (ensures grey_reached m o ==> live_reached m lv o)
-  = let f (p: wpath m o) : Lemma (live_reached m lv o) = wpath_lpath m snap allocd lv o p in
+          (ensures grey_reached m o ==> live_reached m None lv o)
+  = let f (p: wpath m o) : Lemma (live_reached m None lv o) = wpath_lpath m snap allocd lv o p in
     C.forall_intro f
 
-let reached_grey (m: mheap) (lv: nat -> prop) (o: nat)
-  : Lemma (live_reached m lv o ==> grey_reached m o)
-  = let f (p: lpath m lv o) : Lemma (grey_reached m o) = lpath_wpath m lv o p in
+let reached_grey (m: mheap) (sc: scan) (lv: nat -> prop) (o: nat)
+  : Lemma (live_reached m sc lv o ==> grey_reached m o)
+  = let f (p: lpath m sc lv o) : Lemma (grey_reached m o) = lpath_wpath m sc lv o p in
     C.forall_intro f
 
-/// **From the contracts' form**, with the configuration's sets.
+/// **From the contracts' form**, with the configuration's sets, when nothing
+/// is being scanned.
 let tri_of_tricolour (#c: comps) (x: config c) (m: mheap)
-  : Lemma (requires tricolour m x.snap x.allocd) (ensures tri_iu x m)
+  : Lemma (requires tricolour m x.snap x.allocd /\ scan_of x == None) (ensures tri_iu x m)
   = C.forall_intro (reached_live m x.snap x.allocd (union x.snap x.allocd))
 
 /// **To the contracts' form**, when free blocks are not dark.
 let tricolour_of_tri (#c: comps) (x: config c) (m: mheap)
   : Lemma (requires tri_iu x m /\ (forall (o: nat). is_block m o /\ c.a.free x.ast x.w.cmaj o ==> not (dark (col_of m o))))
           (ensures tricolour m x.snap x.allocd)
-  = C.forall_intro (reached_grey m (union x.snap x.allocd))
+  = C.forall_intro (reached_grey m (scan_of x) (union x.snap x.allocd))
 
 /// ---------------------------------------------------------------------------
 /// Consequences
