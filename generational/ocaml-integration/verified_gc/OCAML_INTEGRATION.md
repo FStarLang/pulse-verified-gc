@@ -345,6 +345,30 @@ minor.data     = minor_base  (real pointer)
 The verified code sees minor addresses as offsets `[0, minor_heap_size)`.
 OCaml sees them as absolute addresses `[minor_base, minor_base + size)`.
 
+That picture is bytecode's, which allocates bottom-up through `bump_ref`.
+Native code allocates top-down, as stock OCaml does: the blocks run from
+`young_ptr` to `young_alloc_end`, and offset 0 of the buffer is below them.
+The verified minor collection requires `minor_wf` (a header chain from
+offset 0 landing exactly on `bump`), so for the length of each minor
+collection (`do_minor_gc_core`, and `full_gc` in `do_full_gc_stw`) native
+code gives it a window of the buffer (`native_window_open`): base
+`young_ptr`, size and `bump` the bytes used; when those are fewer than
+`(Max_young_wosize + 1) * 8` (the interface's lower bound on
+`minor_heap_size`), one dead `Abstract_tag` block just below `young_ptr`
+pads it to that (16 bytes when only 8 would be needed: the chain allows no
+wosize 0; the native nursery has a word more than that bound, so the
+padding always fits).  An empty nursery's window is its top
+`(Max_young_wosize + 1) * 8` bytes with `bump` 0.  `minor.data`,
+`minor.size`, `minor_base`, `minor_base_addr` and `minor_heap_size_u64`
+are set to the window and `krmlinit_globals()` re-run; all are restored
+right after (`native_window_close`), so pacing, the barrier and the program
+always see the whole nursery.
+
+`VERGC_CHECK_NURSERY=1` (testing) walks the nursery given to every verified
+minor collection, as `minor_chain_valid` and `minor_chain_no_infix` do, and
+aborts unless the walk lands exactly on `bump`; with `VERGC_MAJOR_STATS=1`
+too it prints `vergc-nursery-check: walks= nonempty= padded=` at exit.
+
 ---
 
 ## Address Translation
@@ -1528,6 +1552,7 @@ writes results back to OCaml root locations.
 |-----------|----------|:---------:|-------|
 | Runtime root iteration | `caml_do_roots` -> `scan_minor_root` | Bridge | OCaml root enumeration and address translation |
 | Remembered-set enumeration | `collect_minor_roots_and_refs` | Bridge | Reads `Caml_state->_ref_table`, appends minor values to `root_values[]`, passes slot addresses to verified code |
+| Native nursery window | `native_window_open`, `native_window_close` | Bridge | Native only: the verified collection is given the run of blocks from `young_ptr` (plus a padding block when short), see Minor Heap Addressing |
 | Forwarding-array reset | `memset(gc_fwd_arr, 0, ...)` | Bridge | Clears stale forwarding entries before each collection |
 | Minor collection | `minor_collect` | Verified | Promotion, promoted-object rewrite, remembered-slot rewrite, root rewrite, minor reset, OOM flag |
 | Full collection | `full_gc` | Verified | Calls `minor_collect`, then `start_cycle` (darkens post-minor roots onto the persistent mark stack, enters `Marking`), then `major_slice` until idle (one slice marks, one sweeps) |
