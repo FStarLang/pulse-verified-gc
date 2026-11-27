@@ -114,6 +114,23 @@ let rec tail_idx (c: comps) (sty: style) (x: config c) (tl: list event) (k: nat)
   = match tl with
     | e :: r -> if k = 0 then () else tail_idx c sty (step c x e) r (k - 1)
 
+/// A step of a run meets the conditions.
+let run_at (c: comps) (sty: style) (n ny: nat) (es: list event) (i: nat)
+  : Lemma (requires run_ok c sty n ny es /\ run_hyps c n ny es /\ i < L.length es)
+          (ensures conds c sty (at c n ny es i) (ev es i))
+  = ()
+
+/// A step of the tail (small context: only the tail's conditions).
+let run_pt_tail (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (tl: list event) (i: nat)
+  : Lemma (requires s <= L.length es /\ tail_ok c sty (at c n ny es s) tl /\ s <= i /\ i < s + L.length tl)
+          (ensures i < L.length (L.append (take s es) tl) /\
+                   conds c sty (at c n ny (L.append (take s es) tl) i) (ev (L.append (take s es) tl) i))
+  = len_app es s tl;
+    let k : nat = i - s in
+    at_tail c n ny es s tl k;
+    ev_tail es s tl k;
+    tail_idx c sty (at c n ny es s) tl k
+
 let run_pt (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (tl: list event) (i: nat)
   : Lemma (requires run_ok c sty n ny es /\ run_hyps c n ny es /\ s <= L.length es /\
                     tail_ok c sty (at c n ny es s) tl /\ i < L.length (L.append (take s es) tl))
@@ -121,13 +138,9 @@ let run_pt (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (tl: li
   = len_app es s tl;
     if i < s then begin
       at_pre c n ny es s tl i;
-      ev_pre es s tl i
-    end else begin
-      let k = i - s in
-      at_tail c n ny es s tl k;
-      ev_tail es s tl k;
-      tail_idx c sty (at c n ny es s) tl k
-    end
+      ev_pre es s tl i;
+      run_at c sty n ny es i
+    end else run_pt_tail c sty n ny es s tl i
 
 /// **`es` up to `s`, then a good tail, is a run.**
 let run_of_tail (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (tl: list event)

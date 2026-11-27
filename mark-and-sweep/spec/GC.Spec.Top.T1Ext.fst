@@ -331,17 +331,17 @@ let trans_at (c: comps) (sty: style) (n ny: nat) (es: list event) (prog: list re
 let idle_ok (#c: comps) (x: config c) : prop = Idle? x.ph /\ x.stopped == false
 
 /// The end of a whole cycle is idle.
-let cyc_end (c: comps) (sty: style) (n ny: nat) (es: list event) (s a b: nat)
+let cyc_end (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (a: slices) (b: nat)
   : Lemma (requires run_pre c sty n ny (L.append (take s es) (stw_tail a b)) /\ s <= L.length es)
           (ensures idle_ok (last_x c n ny (L.append (take s es) (stw_tail a b))))
   = let es' = L.append (take s es) (stw_tail a b) in
-    let j = s + a + b + 2 in
-    T2.stw_ev es s a b (a + b + 2);
+    let j = s + L.length a + b + 2 in
+    T2.stw_ev es s a b (L.length a + b + 2);
     at_i c sty n ny es' j;
     RF.at_succ c n ny es' j
 
 /// Its events are collector events, none an allocation.
-let cyc_shape (es: list event) (a b: nat)
+let cyc_shape (es: list event) (a: slices) (b: nat)
   : Lemma (forall (k: nat). k < L.length (stw_tail a b) ==>
              ~(is_mutator_event (L.index (stw_tail a b) k)) /\ ~(EAlloc? (L.index (stw_tail a b) k)))
   = let f (k: nat) : Lemma (k < L.length (stw_tail a b) ==>
@@ -353,13 +353,13 @@ let cyc_shape (es: list event) (a b: nat)
 /// **A whole stop-the-world cycle.**
 let cyc_chunk (c: comps) (sty: style) (n ny: nat) (es: list event) (prog: list revent) (io: nat -> renaming)
   : Lemma (requires components_ok c /\ core c sty n ny es prog io /\ idle_ok (last_x c n ny es))
-          (ensures exists (a b: nat) (io': nat -> renaming).
+          (ensures exists (a: slices) (b: nat) (io': nat -> renaming).
                      core c sty n ny (L.append es (stw_tail a b)) prog io' /\
                      idle_ok (last_x c n ny (L.append es (stw_tail a b))))
   = let x = last_x c n ny es in
     rinv_at c sty n ny es (L.length es);
     SB.stw_build sty x;
-    eliminate exists (a b: nat). RA.tail_ok c sty x (stw_tail a b)
+    eliminate exists (a: slices) (b: nat). RA.tail_ok c sty x (stw_tail a b)
     with begin
       cyc_shape es a b;
       ext_coll c sty n ny es (stw_tail a b) prog io;

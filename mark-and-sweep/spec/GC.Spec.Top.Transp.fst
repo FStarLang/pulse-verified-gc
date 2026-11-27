@@ -252,16 +252,16 @@ let stuck (#c: comps) (x: config c) (ι: renaming) (re: revent) (es2: list event
   match re with
   | RAlloc false tag rvs ->
     if L.length rvs >= 1
-    then (x.stopped == false /\ (exists (a b: nat). ends_with es2 (EMinor :: stw_tail a b)) /\
+    then (x.stopped == false /\ (exists (a: slices) (b: nat). ends_with es2 (EMinor :: stw_tail a b)) /\
           (let (_, _, r) = c.a.alloc x.ph x.w.cmaj x.ast (L.length rvs) tag in NoRoom? r)) \/
-         (x.stopped == true /\ (exists (a b: nat). ends_with es2 (L.append (stw_tail a b) [EMinor])))
+         (x.stopped == true /\ (exists (a: slices) (b: nat). ends_with es2 (L.append (stw_tail a b) [EMinor])))
     else False
   | RAlloc true tag rvs ->
     if L.length rvs >= 1
     then (x.stopped == false /\ ends_with es2 [EMinor] /\
           (forall (vs: list value). vcorr_list ι (wv x) (scannable tag) vs rvs ==>
              None? (c.r.yalloc x.w.cyng (L.length rvs) tag vs))) \/
-         (x.stopped == true /\ (exists (a b: nat). ends_with es2 (L.append (stw_tail a b) [EMinor])))
+         (x.stopped == true /\ (exists (a: slices) (b: nat). ends_with es2 (L.append (stw_tail a b) [EMinor])))
     else False
   | _ -> False
 
@@ -270,7 +270,7 @@ let stuck (#c: comps) (x: config c) (ι: renaming) (re: revent) (es2: list event
 noeq type chunk =
   | CProg  : e:event -> chunk
   | CMinor : chunk
-  | CCycle : a:nat -> b:nat -> chunk
+  | CCycle : a:slices -> b:nat -> chunk
 
 let rec flat (cs: list chunk) : list event =
   match cs with
@@ -295,7 +295,7 @@ let t1_local (c: comps) (sty: style) : prop =
 
 /// Part 2: the stop-the-world replay of the cycle `s..j` of `es`.
 let stw_replay (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) : prop =
-  exists (a b: nat) (q: list event) (m: nat) (ι2: nat -> renaming).
+  exists (a: slices) (b: nat) (q: list event) (m: nat) (ι2: nat -> renaming).
     let es2 = L.append (L.append (take s es) (stw_tail a b)) q in
     replay_events q /\
     run_ok c sty n ny es2 /\ no_fail c n ny es2 /\

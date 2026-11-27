@@ -42,35 +42,35 @@ let run_pre_elim (c: comps) (sty: style) (n ny: nat) (es: list event)
 /// The stop-the-world run's cycle
 /// ---------------------------------------------------------------------------
 
-let es2 (es: list event) (s a b: nat) : list event = L.append (take s es) (stw_tail a b)
+let es2 (es: list event) (s: nat) (a: slices) (b: nat) : list event = L.append (take s es) (stw_tail a b)
 
-let stw_ev (es: list event) (s a b k: nat)
-  : Lemma (requires s <= L.length es /\ k <= a + b + 2)
-          (ensures L.length (es2 es s a b) == s + a + b + 3 /\ last (es2 es s a b) == s + a + b + 2 /\
+let stw_ev (es: list event) (s: nat) (a: slices) (b k: nat)
+  : Lemma (requires s <= L.length es /\ k <= L.length a + b + 2)
+          (ensures L.length (es2 es s a b) == s + L.length a + b + 3 /\ last (es2 es s a b) == s + L.length a + b + 2 /\
                    s + k < L.length (es2 es s a b) /\
                    (k = 0 ==> ev (es2 es s a b) (s + k) == EStart) /\
-                   (0 < k /\ k < a + b + 2 ==> coll (ev (es2 es s a b) (s + k))) /\
-                   (k = a + b + 2 ==> ev (es2 es s a b) (s + k) == EEnd))
+                   (0 < k /\ k < L.length a + b + 2 ==> coll (ev (es2 es s a b) (s + k))) /\
+                   (k = L.length a + b + 2 ==> ev (es2 es s a b) (s + k) == EEnd))
   = tail_shape a b k;
     len_app es s (stw_tail a b);
     ev_tail es s (stw_tail a b) k
 
 /// The same, by the run's index.
-let stw_mid (es: list event) (s a b t: nat)
-  : Lemma (requires s <= L.length es /\ s < t /\ t < s + a + b + 2)
+let stw_mid (es: list event) (s: nat) (a: slices) (b t: nat)
+  : Lemma (requires s <= L.length es /\ s < t /\ t < s + L.length a + b + 2)
           (ensures t < L.length (es2 es s a b) /\ coll (ev (es2 es s a b) t))
   = let k = t - s in
     assert (s + k == t);
     stw_ev es s a b k
 
-let stw_cycle (es: list event) (s a b: nat)
+let stw_cycle (es: list event) (s: nat) (a: slices) (b: nat)
   : Lemma (requires s <= L.length es)
-          (ensures is_cycle (es2 es s a b) s (s + a + b + 2) /\ last (es2 es s a b) == s + a + b + 2)
+          (ensures is_cycle (es2 es s a b) s (s + L.length a + b + 2) /\ last (es2 es s a b) == s + L.length a + b + 2)
   = stw_ev es s a b 0;
-    stw_ev es s a b (a + b + 2);
-    let f (t: nat) : Lemma (s < t /\ t < s + a + b + 2 ==>
+    stw_ev es s a b (L.length a + b + 2);
+    let f (t: nat) : Lemma (s < t /\ t < s + L.length a + b + 2 ==>
                             ~(ev (es2 es s a b) t == EStart) /\ ~(ev (es2 es s a b) t == EEnd))
-      = if s < t && t < s + a + b + 2 then stw_ev es s a b (t - s) in
+      = if s < t && t < s + L.length a + b + 2 then stw_ev es s a b (t - s) in
     C.forall_intro f
 
 let coll_allocd (#c: comps) (x: config c) (e: event)
@@ -80,14 +80,14 @@ let coll_allocd (#c: comps) (x: config c) (e: event)
     | _ -> ()
 
 /// The stop-the-world run allocates nothing.
-let rec stw_allocd (c: comps) (sty: style) (n ny: nat) (es: list event) (s a b t o: nat)
-  : Lemma (requires run_pre c sty n ny (es2 es s a b) /\ s <= L.length es /\ s + 1 <= t /\ t <= s + a + b + 2)
+let rec stw_allocd (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (a: slices) (b t o: nat)
+  : Lemma (requires run_pre c sty n ny (es2 es s a b) /\ s <= L.length es /\ s + 1 <= t /\ t <= s + L.length a + b + 2)
           (ensures ~((at c n ny (es2 es s a b) t).allocd o))
           (decreases t)
   = let es' = es2 es s a b in
     stw_cycle es s a b;
-    Cy.cyc_intro c sty n ny es' s (s + a + b + 2);
-    if t = s + 1 then Cy.cycle_start c sty n ny es' s (s + a + b + 2)
+    Cy.cyc_intro c sty n ny es' s (s + L.length a + b + 2);
+    if t = s + 1 then Cy.cycle_start c sty n ny es' s (s + L.length a + b + 2)
     else begin
       stw_allocd c sty n ny es s a b (t - 1) o;
       stw_mid es s a b (t - 1);
@@ -110,11 +110,11 @@ let keeps (c: comps) (sty: style) (n ny: nat) (es: list event) (s j o: nat)
 /// The equivalence
 /// ---------------------------------------------------------------------------
 
-let equiv_ab (c: comps) (sty: style) (n ny: nat) (es: list event) (s j a b: nat)
+let equiv_ab (c: comps) (sty: style) (n ny: nat) (es: list event) (s j: nat) (a: slices) (b: nat)
   : Lemma (requires run_pre c sty n ny es /\ is_cycle es s j /\ run_pre c sty n ny (es2 es s a b))
           (ensures stw_equiv c n ny es s j (es2 es s a b))
   = let es' = es2 es s a b in
-    let j' = s + a + b + 2 in
+    let j' = s + L.length a + b + 2 in
     stw_cycle es s a b;
     let pre (i: nat) : Lemma (i <= s ==> at c n ny es' i == at c n ny es i)
       = if i <= s then at_pre c n ny es s (stw_tail a b) i in
@@ -128,7 +128,7 @@ let equiv_ab (c: comps) (sty: style) (n ny: nat) (es: list event) (s j a b: nat)
 let equiv_of (c: comps) (sty: style) (n ny: nat) (es es': list event) (s j: nat)
   : Lemma (requires run_pre c sty n ny es /\ is_cycle es s j /\ stw_run es s es' /\ run_pre c sty n ny es')
           (ensures stw_equiv c n ny es s j es')
-  = eliminate exists (a b: nat). es' == L.append (take s es) (stw_tail a b)
+  = eliminate exists (a: slices) (b: nat). es' == L.append (take s es) (stw_tail a b)
     with equiv_ab c sty n ny es s j a b
 
 /// **T2, with the contracts at the steps of both runs.**
@@ -157,7 +157,7 @@ let t2_local_ok (c: comps) (sty: style) : Lemma (t2_local c sty)
 /// **The stop-the-world run exists, and is a run.**
 let stw_exists (c: comps) (sty: style) (n ny: nat) (es: list event) (s j: nat)
   : Lemma (requires components_ok c /\ run_ok c sty n ny es /\ is_cycle es s j)
-          (ensures exists (a b: nat). run_pre c sty n ny (es2 es s a b) /\ run_pre c sty n ny es)
+          (ensures exists (a: slices) (b: nat). run_pre c sty n ny (es2 es s a b) /\ run_pre c sty n ny es)
   = RF.run_hyps_of_ok c n ny es;
     run_pre_intro c sty n ny es;
     Cy.cyc_intro c sty n ny es s j;
@@ -165,7 +165,7 @@ let stw_exists (c: comps) (sty: style) (n ny: nat) (es: list event) (s j: nat)
     rinv_at c sty n ny es s;
     at_i c sty n ny es s;
     stw_build sty (at c n ny es s);
-    eliminate exists (a b: nat). tail_ok c sty (at c n ny es s) (stw_tail a b)
+    eliminate exists (a: slices) (b: nat). tail_ok c sty (at c n ny es s) (stw_tail a b)
     with begin
       run_of_tail c sty n ny es s (stw_tail a b);
       run_pre_intro c sty n ny (es2 es s a b)
@@ -175,7 +175,7 @@ let t2_run (c: comps) (sty: style) (n ny: nat) (es: list event) (s j: nat)
   : Lemma (requires components_ok c /\ run_ok c sty n ny es /\ is_cycle es s j)
           (ensures exists (es': list event). stw_run es s es' /\ run_ok c sty n ny es' /\ stw_equiv c n ny es s j es')
   = stw_exists c sty n ny es s j;
-    eliminate exists (a b: nat). run_pre c sty n ny (es2 es s a b) /\ run_pre c sty n ny es
+    eliminate exists (a: slices) (b: nat). run_pre c sty n ny (es2 es s a b) /\ run_pre c sty n ny es
     with begin
       let es' = es2 es s a b in
       run_pre_elim c sty n ny es';

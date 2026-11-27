@@ -23,14 +23,17 @@ module L = FStar.List.Tot
 
 let rec rep (k: nat) (e: event) : list event = if k = 0 then [] else e :: rep (k - 1) e
 
-/// A whole cycle and nothing else: start, `a` slices, the handover, `b`
+/// The slices of a mark, each the list of its moves.
+type slices = list (list move)
+
+/// A whole cycle and nothing else: start, the slices `a`, the handover, `b`
 /// sweep steps, the end.
-let stw_tail (a b: nat) : list event =
-  EStart :: L.append (rep a ESlice) (EHandover :: L.append (rep b ESweep) [EEnd])
+let stw_tail (a: slices) (b: nat) : list event =
+  EStart :: L.append (L.map ESlice a) (EHandover :: L.append (rep b ESweep) [EEnd])
 
 /// `es'` is `es` up to `s`, then a whole cycle and nothing else.
 let stw_run (es: list event) (s: nat) (es': list event) : prop =
-  s <= L.length es /\ (exists (a b: nat). es' == L.append (take s es) (stw_tail a b))
+  s <= L.length es /\ (exists (a: slices) (b: nat). es' == L.append (take s es) (stw_tail a b))
 
 /// The last event of a run (of an empty one, 0: `is_cycle` then fails).
 let last (es: list event) : nat = if L.length es > 0 then L.length es - 1 else 0

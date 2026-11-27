@@ -4163,3 +4163,31 @@ Checked (no `--retry`, seeds 0, 1, 2): `Iface`, `Words`, `Run`, `Views`,
 T1 and T2 (checkpoint 2: `Stw`, `StwBuild`, `T1*`, `TrMinB`, `T2`), and the
 instances and witness runs (checkpoint 3: `ByteMark`, `ToyMark`,
 `Vacuity`, `PW*`, `FFW*`, the code wrappers).
+
+**Checkpoint 2 (T1 and T2)**, built 2026-11-27, uncommitted.
+
+- **Statement change, forced by the slice carrying its moves**: the
+  stop-the-world cycle `stw_tail a b` takes its slices as a list
+  (`a : slices = list (list move)`, one `ESlice` per element) instead of a
+  count.  This changes the binders of `stw_run` (T2), and of `stuck` and
+  `stw_replay` (T1 part 2), from `a : nat` to `a : slices`; nothing else in
+  T1's or T2's statements changes.
+- **T2's construction** (`StwBuild.mark_build`): one move per slice,
+  `pick`: scan the next field if the scanned block has one left, blacken
+  it if not; with nothing being scanned, start a grey block that has
+  fields to scan, or blacken one that has none.  The model allows it
+  (`pick_ok`, from `scan_ok`); when no block is grey, nothing is being
+  scanned (`done_none`), so the handover is enabled.  Termination: `mm` is
+  now (white live, grey live, `fleft`) in a mixed radix, `fleft <= size + 1`
+  on a well-formed heap, and clause (6) decreases it (`mm_counts`, `lex3`).
+- **T1**: the replay's cycle chunks carry slice lists (`CCycle`); the
+  proofs needed only the binder change, plus context splits where the
+  larger step and hypothesis definitions made queries time out or turn
+  seed-sensitive: `RunApp.run_at`/`run_pt_tail`, and in `TrEvC` the
+  major write's field facts proved without `sim_pre` in context
+  (`mwrite_fld_core`), with "every other word unchanged" passed sealed
+  (`others_kept`, `write_w_kept`).
+
+Checked (no `--retry`, seeds 0, 1, 2): every module of `T1`, `T2` and
+`gc_correct` (`Correct`) in dependency order, from `Iface` on.  Not yet
+rechecked: the instances and witness runs (checkpoint 3).

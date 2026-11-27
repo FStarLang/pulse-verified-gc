@@ -122,15 +122,15 @@ let mwrite_cw (#c: comps) (x: config c) (o i: nat) (v: value)
                    (step c x (EWrite (Major o) i v)).w.cyng == x.w.cyng)
   = ()
 
-let mwrite_fld (#c: comps) (x: config c) (o i: nat) (v: value) (rn: renaming) (r: rstore) (q: ptr) (j: nat)
-  : Lemma (requires sim_pre x (EWrite (Major o) i v) rn r /\
+/// The fields after a major write (small context: no `sim_pre`).
+let mwrite_fld_core (#c: comps) (x: config c) (o i: nat) (v: value) (q: ptr) (j: nat)
+  : Lemma (requires concl_point x /\ concl_step x (EWrite (Major o) i v) (step c x (EWrite (Major o) i v)) /\
                     agree (vw x).yng (vw (step c x (EWrite (Major o) i v))).yng /\
                     tag_of (mj x) o <> closure_tag /\
                     visible (vw x) q /\ j < wz_of (ph (vw x) q) (pa q))
           (ensures fld (vw (step c x (EWrite (Major o) i v))) q j ==
                    (if Major? q && pa q = o && j = i then v else fld (vw x) q j))
   = let e = EWrite (Major o) i v in
-    cs_of x e rn r;
     let w = vw x in
     let w' = vw (step c x e) in
     match q with
@@ -143,6 +143,45 @@ let mwrite_fld (#c: comps) (x: config c) (o i: nat) (v: value) (rn: renaming) (r
       assert (j < wz_of w.yng y);
       assert (fld w' q j == field w'.yng y j /\ fld w q j == field w.yng y j);
       assert (field w'.yng y j == field w.yng y j)
+
+let mwrite_fld (#c: comps) (x: config c) (o i: nat) (v: value) (rn: renaming) (r: rstore) (q: ptr) (j: nat)
+  : Lemma (requires sim_pre x (EWrite (Major o) i v) rn r /\
+                    agree (vw x).yng (vw (step c x (EWrite (Major o) i v))).yng /\
+                    tag_of (mj x) o <> closure_tag /\
+                    visible (vw x) q /\ j < wz_of (ph (vw x) q) (pa q))
+          (ensures fld (vw (step c x (EWrite (Major o) i v))) q j ==
+                   (if Major? q && pa q = o && j = i then v else fld (vw x) q j))
+  = cs_of x (EWrite (Major o) i v) rn r;
+    mwrite_fld_core x o i v q j
+
+/// Every other word of a visible block is unchanged (sealed, so it travels
+/// through the large contexts below as one fact).
+[@@"opaque_to_smt"]
+let others_kept (w w': world) (p: ptr) (i: nat) : prop =
+  forall (q: ptr) (j: nat). visible w q /\ j < wz_of (ph w q) (pa q) /\ ~(q == p /\ j == i) ==> fld w' q j == fld w q j
+
+let mwrite_flds (#c: comps) (x: config c) (o i: nat) (v: value)
+  : Lemma (requires concl_point x /\ concl_step x (EWrite (Major o) i v) (step c x (EWrite (Major o) i v)) /\
+                    agree (vw x).yng (vw (step c x (EWrite (Major o) i v))).yng /\
+                    tag_of (mj x) o <> closure_tag)
+          (ensures others_kept (vw x) (vw (step c x (EWrite (Major o) i v))) (Major o) i)
+  = let f (q: ptr) (j: nat)
+      : Lemma (requires visible (vw x) q /\ j < wz_of (ph (vw x) q) (pa q) /\ ~(q == Major o /\ j == i))
+              (ensures fld (vw (step c x (EWrite (Major o) i v))) q j == fld (vw x) q j)
+      = mwrite_fld_core x o i v q j in
+    C.forall_intro_2 (fun q j -> C.move_requires (f q) j);
+    reveal_opaque (`%others_kept) others_kept
+
+let write_w_kept (rn: renaming) (w w': world) (r: rstore) (p: ptr) (i: nat) (v: value)
+  : Lemma (requires ip_ctx rn w w' r /\ r_res w /\ w'.roots == w.roots /\
+                    visible w p /\ i < wz_of (ph w p) (pa p) /\ tag_of (ph w p) (pa p) <> closure_tag /\
+                    (scannable (tag_of (ph w p) (pa p)) ==> value_ok w v) /\
+                    fld w' p i == v /\ others_kept w w' p i /\
+                    (forall (y j: nat) (q: ptr). ptr_field w'.yng y j /\ target w' (field w'.yng y j) == Some q /\ Major? q ==>
+                       img w pid None q))
+          (ensures write_w rn w w' r p i v)
+  = reveal_opaque (`%others_kept) others_kept;
+    write_w_intro rn w w' r p i v
 
 let mwrite_world (#c: comps) (x: config c) (o i: nat) (v: value) (rn: renaming) (r: rstore)
   : Lemma (requires sim_pre x (EWrite (Major o) i v) rn r)
@@ -157,19 +196,18 @@ let mwrite_world (#c: comps) (x: config c) (o i: nat) (v: value) (rn: renaming) 
     let w = vw x in
     let w' = vw x' in
     maj_vis x e o;
-    C.forall_intro_2 (fun (q: ptr) (j: nat) -> C.move_requires (mwrite_fld x o i v rn r q) j);
+    mwrite_fld_core x o i v (Major o) i;
+    mwrite_flds x o i v;
     yrefs_same rn None w w' r;
     assert (ip_ctx rn w w' r /\ r_res w);
     assert (w'.roots == w.roots);
     assert (visible w (Major o) /\ i < wz_of w.maj o /\ tag_of w.maj o <> closure_tag);
     assert (scannable (tag_of w.maj o) ==> value_ok w v);
     assert (fld w' (Major o) i == v);
-    assert (forall (q: ptr) (j: nat). visible w q /\ j < wz_of (ph w q) (pa q) /\ ~(q == Major o /\ j == i) ==>
-              fld w' q j == fld w q j);
     assert (ph w (Major o) == w.maj /\ pa (Major o) == o);
     assert (forall (y j: nat) (q: ptr). ptr_field w'.yng y j /\ target w' (field w'.yng y j) == Some q /\ Major? q ==>
               img w pid None q);
-    write_w_intro rn w w' r (Major o) i v
+    write_w_kept rn w w' r (Major o) i v
 
 /// **A major write.**
 let sim_mwrite (#c: comps) (x: config c) (o i: nat) (v: value) (rn: renaming) (r: rstore)

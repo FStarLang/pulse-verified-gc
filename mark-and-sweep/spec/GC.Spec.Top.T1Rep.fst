@@ -63,11 +63,11 @@ let cons_app (#t: Type) (x: t) (l: list t) : Lemma (L.append [x] l == x :: l) = 
 let mem_one (#t: Type) (x y: t) : Lemma (L.memP x [y] <==> x == y) = ()
 #pop-options
 
-let pre0 (es: list event) (s a b: nat) : list event = L.append (take s es) (stw_tail a b)
+let pre0 (es: list event) (s: nat) (a: slices) (b: nat) : list event = L.append (take s es) (stw_tail a b)
 
-let es_of (es: list event) (s a b: nat) (cs: list chunk) : list event = L.append (pre0 es s a b) (flat cs)
+let es_of (es: list event) (s: nat) (a: slices) (b: nat) (cs: list chunk) : list event = L.append (pre0 es s a b) (flat cs)
 
-let es_snoc (es: list event) (s a b: nat) (cs: list chunk) (ch: chunk)
+let es_snoc (es: list event) (s: nat) (a: slices) (b: nat) (cs: list chunk) (ch: chunk)
   : Lemma (es_of es s a b (L.append cs [ch]) == L.append (es_of es s a b cs) (flat [ch]))
   = flat_app cs [ch];
     LP.append_assoc (pre0 es s a b) (flat cs) (flat [ch])
@@ -93,17 +93,17 @@ let good (c: comps) (prog: list revent) : prop =
   (forall (m: nat). m < L.length prog ==> names_reach (rat prog m) (rev_at prog m) /\ wit c (rat prog m) (rev_at prog m))
 
 /// The replay after its chunks `cs`, at program event `m` (perhaps stopped).
-let lst0 (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let lst0 (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming) : prop =
   s <= L.length es /\ mc es s <= m /\ m <= L.length prog /\ chunks_ok cs /\
   core c sty n ny (es_of es s a b cs) (take m prog) io /\ Idle? (last_x c n ny (es_of es s a b cs)).ph
 
-let lst (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let lst (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming) : prop =
   lst0 c sty n ny es s prog a b cs m io /\ idle_ok (last_x c n ny (es_of es s a b cs))
 
 /// **The replay, done or stuck.**
-let fin (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let fin (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming)
   : Lemma (requires lst0 c sty n ny es s prog a b cs m io /\
                     (let e2 = es_of es s a b cs in
@@ -115,7 +115,7 @@ let fin (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: lis
     RA.take_len m prog;
     tr_done c n ny e2 (take m prog) io;
     assert (replay_events q);
-    introduce exists (a' b': nat) (q': list event) (m': nat) (io': nat -> renaming).
+    introduce exists (a': slices) (b': nat) (q': list event) (m': nat) (io': nat -> renaming).
       (let es2 = L.append (L.append (take s es) (stw_tail a' b')) q' in
        replay_events q' /\
        run_ok c sty n ny es2 /\ no_fail c n ny es2 /\
@@ -130,7 +130,7 @@ let fin (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: lis
 /// One chunk more
 /// ---------------------------------------------------------------------------
 
-let st_trans (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let st_trans (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming)
   : Lemma (requires good c prog /\ lst c sty n ny es s prog a b cs m io /\ m < L.length prog)
           (ensures (let e2 = es_of es s a b cs in
@@ -139,7 +139,7 @@ let st_trans (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog
                       ev_corr (io (L.length e2)) (wv x) (rat prog m) e (rev_at prog m)))
   = trans_at c sty n ny (es_of es s a b cs) prog m io
 
-let st_prog (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let st_prog (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming) (e: event)
   : Lemma (requires components_ok c /\ good c prog /\ lst c sty n ny es s prog a b cs m io /\ m < L.length prog /\
                     (let e2 = es_of es s a b cs in
@@ -153,14 +153,14 @@ let st_prog (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog:
     flat_one (CProg e);
     chunks_snoc cs (CProg e)
 
-let st_cyc (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let st_cyc (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming)
   : Lemma (requires components_ok c /\ lst c sty n ny es s prog a b cs m io)
-          (ensures exists (a1 b1: nat) (io': nat -> renaming).
+          (ensures exists (a1: slices) (b1: nat) (io': nat -> renaming).
                      lst c sty n ny es s prog a b (L.append cs [CCycle a1 b1]) m io')
   = let e2 = es_of es s a b cs in
     cyc_chunk c sty n ny e2 (take m prog) io;
-    eliminate exists (a1 b1: nat) (io': nat -> renaming).
+    eliminate exists (a1: slices) (b1: nat) (io': nat -> renaming).
       core c sty n ny (L.append e2 (stw_tail a1 b1)) (take m prog) io' /\
       idle_ok (last_x c n ny (L.append e2 (stw_tail a1 b1)))
     with begin
@@ -170,7 +170,7 @@ let st_cyc (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: 
       assert (lst c sty n ny es s prog a b (L.append cs [CCycle a1 b1]) m io')
     end
 
-let st_min (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let st_min (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming)
   : Lemma (requires components_ok c /\ lst c sty n ny es s prog a b cs m io)
           (ensures exists (io': nat -> renaming). lst0 c sty n ny es s prog a b (L.append cs [CMinor]) m io')
@@ -184,12 +184,12 @@ let st_min (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: 
 /// How the replay ends
 /// ---------------------------------------------------------------------------
 
-let ends_m (es: list event) (s a b: nat) (cs: list chunk)
+let ends_m (es: list event) (s: nat) (a: slices) (b: nat) (cs: list chunk)
   : Lemma (ends_with (es_of es s a b (L.append cs [CMinor])) [EMinor])
   = es_snoc es s a b cs CMinor;
     flat_one CMinor
 
-let ends_cm (es: list event) (s a b: nat) (cs: list chunk) (a1 b1: nat)
+let ends_cm (es: list event) (s: nat) (a: slices) (b: nat) (cs: list chunk) (a1: slices) (b1: nat)
   : Lemma (ends_with (es_of es s a b (L.append (L.append cs [CCycle a1 b1]) [CMinor])) (L.append (stw_tail a1 b1) [EMinor]))
   = es_snoc es s a b (L.append cs [CCycle a1 b1]) CMinor;
     es_snoc es s a b cs (CCycle a1 b1);
@@ -197,7 +197,7 @@ let ends_cm (es: list event) (s a b: nat) (cs: list chunk) (a1 b1: nat)
     flat_one CMinor;
     LP.append_assoc (es_of es s a b cs) (stw_tail a1 b1) [EMinor]
 
-let ends_mc (es: list event) (s a b: nat) (cs: list chunk) (a2 b2: nat)
+let ends_mc (es: list event) (s: nat) (a: slices) (b: nat) (cs: list chunk) (a2: slices) (b2: nat)
   : Lemma (ends_with (es_of es s a b (L.append (L.append cs [CMinor]) [CCycle a2 b2])) (EMinor :: stw_tail a2 b2))
   = es_snoc es s a b (L.append cs [CMinor]) (CCycle a2 b2);
     es_snoc es s a b cs CMinor;
@@ -207,12 +207,12 @@ let ends_mc (es: list event) (s a b: nat) (cs: list chunk) (a2 b2: nat)
     cons_app EMinor (stw_tail a2 b2)
 
 /// What the replay reaches from `m`: the end, or program event `m + 1`.
-let goal (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat) (m: nat) : prop =
+let goal (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat) (m: nat) : prop =
   stw_replay c sty n ny es s prog \/
   (exists (cs': list chunk) (io': nat -> renaming). lst c sty n ny es s prog a b cs' (m + 1) io')
 
 /// The program event at hand, if the replay can perform it now.
-let try_prog (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let try_prog (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming) (e: event)
   : Lemma (requires components_ok c /\ good c prog /\ lst c sty n ny es s prog a b cs m io /\ m < L.length prog /\
                     (let e2 = es_of es s a b cs in
@@ -231,7 +231,7 @@ let en_plain (c: comps) (x: config c) (rn: renaming) (w: world) (r: rstore) (e: 
           (ensures enabled c x e /\ alloc_succeeds x e)
   = ()
 
-let next_plain (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let next_plain (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming)
   : Lemma (requires components_ok c /\ good c prog /\ lst c sty n ny es s prog a b cs m io /\ m < L.length prog /\
                     ~(RAlloc? (rev_at prog m)))
@@ -258,24 +258,24 @@ let en_major (c: comps) (x: config c) (rn: renaming) (w: world) (r: rstore) (e: 
 let s1_stuck (c: comps) (x: config c) (rn: renaming) (r: rstore) (e: event) (re: revent) (es2: list event)
   : Lemma (requires x.stopped == false /\ rok r re /\ RAlloc? re /\ RAlloc?.young re == false /\
                     ev_corr rn (wv x) r e re /\ ~(alloc_succeeds x e) /\
-                    (exists (a2 b2: nat). ends_with es2 (EMinor :: stw_tail a2 b2)))
+                    (exists (a2: slices) (b2: nat). ends_with es2 (EMinor :: stw_tail a2 b2)))
           (ensures stuck x rn re es2)
   = match e with
     | EAlloc sz tag vs -> let (_, _, res) = c.a.alloc x.ph x.w.cmaj x.ast sz tag in (match res with NoRoom -> () | Ok _ -> ())
 
 let s3_stuck (c: comps) (x: config c) (rn: renaming) (r: rstore) (re: revent) (es2: list event)
   : Lemma (requires x.stopped == true /\ rok r re /\ RAlloc? re /\
-                    (exists (a1 b1: nat). ends_with es2 (L.append (stw_tail a1 b1) [EMinor])))
+                    (exists (a1: slices) (b1: nat). ends_with es2 (L.append (stw_tail a1 b1) [EMinor])))
           (ensures stuck x rn re es2)
   = ()
 
 /// After a whole cycle, a minor collection and a whole cycle: perform it,
 /// or (S1).
-let maj_last (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let maj_last (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming)
   : Lemma (requires components_ok c /\ good c prog /\ lst c sty n ny es s prog a b cs m io /\ m < L.length prog /\
                     RAlloc? (rev_at prog m) /\ RAlloc?.young (rev_at prog m) == false /\
-                    (exists (a2 b2: nat). ends_with (es_of es s a b cs) (EMinor :: stw_tail a2 b2)))
+                    (exists (a2: slices) (b2: nat). ends_with (es_of es s a b cs) (EMinor :: stw_tail a2 b2)))
           (ensures goal c sty n ny es s prog a b m)
   = let e2 = es_of es s a b cs in
     let x = last_x c n ny e2 in
@@ -295,8 +295,8 @@ let maj_last (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog
 
 /// After a whole cycle and a minor collection: stopped (S3), or a whole
 /// cycle more.
-let maj_mid (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
-    (cs: list chunk) (a1 b1: nat) (m: nat) (io: nat -> renaming)
+let maj_mid (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
+    (cs: list chunk) (a1: slices) (b1: nat) (m: nat) (io: nat -> renaming)
   : Lemma (requires (let cs2 = L.append (L.append cs [CCycle a1 b1]) [CMinor] in
                      components_ok c /\ good c prog /\ lst0 c sty n ny es s prog a b cs2 m io /\ m < L.length prog /\
                      RAlloc? (rev_at prog m) /\ RAlloc?.young (rev_at prog m) == false))
@@ -311,14 +311,14 @@ let maj_mid (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog:
       fin c sty n ny es s prog a b cs2 m io
     end else begin
       st_cyc c sty n ny es s prog a b cs2 m io;
-      eliminate exists (a2 b2: nat) (io': nat -> renaming). lst c sty n ny es s prog a b (L.append cs2 [CCycle a2 b2]) m io'
+      eliminate exists (a2: slices) (b2: nat) (io': nat -> renaming). lst c sty n ny es s prog a b (L.append cs2 [CCycle a2 b2]) m io'
       with begin
         ends_mc es s a b cs1 a2 b2;
         maj_last c sty n ny es s prog a b (L.append cs2 [CCycle a2 b2]) m io'
       end
     end
 
-let next_major (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let next_major (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming)
   : Lemma (requires components_ok c /\ good c prog /\ lst c sty n ny es s prog a b cs m io /\ m < L.length prog /\
                     RAlloc? (rev_at prog m) /\ RAlloc?.young (rev_at prog m) == false)
@@ -334,7 +334,7 @@ let next_major (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (pr
         try_prog c sty n ny es s prog a b cs m io e
       end else begin
         st_cyc c sty n ny es s prog a b cs m io;
-        eliminate exists (a1 b1: nat) (io1: nat -> renaming). lst c sty n ny es s prog a b (L.append cs [CCycle a1 b1]) m io1
+        eliminate exists (a1: slices) (b1: nat) (io1: nat -> renaming). lst c sty n ny es s prog a b (L.append cs [CCycle a1 b1]) m io1
         with begin
           st_min c sty n ny es s prog a b (L.append cs [CCycle a1 b1]) m io1;
           eliminate exists (io2: nat -> renaming).
@@ -362,7 +362,7 @@ let s2_of (c: comps) (rn: renaming) (w: world) (r: rstore) (x: config c) (e: eve
 
 /// After a whole cycle and a minor collection, not stopped: perform it, or
 /// (S2).
-let yng_last (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let yng_last (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming)
   : Lemma (requires components_ok c /\ good c prog /\ lst c sty n ny es s prog a b cs m io /\ m < L.length prog /\
                     RAlloc? (rev_at prog m) /\ RAlloc?.young (rev_at prog m) == true /\
@@ -386,8 +386,8 @@ let yng_last (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog
       end
     end
 
-let yng_mid (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
-    (cs: list chunk) (a1 b1: nat) (m: nat) (io: nat -> renaming)
+let yng_mid (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
+    (cs: list chunk) (a1: slices) (b1: nat) (m: nat) (io: nat -> renaming)
   : Lemma (requires (let cs2 = L.append (L.append cs [CCycle a1 b1]) [CMinor] in
                      components_ok c /\ good c prog /\ lst0 c sty n ny es s prog a b cs2 m io /\ m < L.length prog /\
                      RAlloc? (rev_at prog m) /\ RAlloc?.young (rev_at prog m) == true))
@@ -405,7 +405,7 @@ let yng_mid (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog:
       yng_last c sty n ny es s prog a b cs2 m io
     end
 
-let next_young (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let next_young (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming)
   : Lemma (requires components_ok c /\ good c prog /\ lst c sty n ny es s prog a b cs m io /\ m < L.length prog /\
                     RAlloc? (rev_at prog m) /\ RAlloc?.young (rev_at prog m) == true)
@@ -419,7 +419,7 @@ let next_young (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (pr
       if ID.strong_excluded_middle (enabled c x e) then try_prog c sty n ny es s prog a b cs m io e
       else begin
         st_cyc c sty n ny es s prog a b cs m io;
-        eliminate exists (a1 b1: nat) (io1: nat -> renaming). lst c sty n ny es s prog a b (L.append cs [CCycle a1 b1]) m io1
+        eliminate exists (a1: slices) (b1: nat) (io1: nat -> renaming). lst c sty n ny es s prog a b (L.append cs [CCycle a1 b1]) m io1
         with begin
           st_min c sty n ny es s prog a b (L.append cs [CCycle a1 b1]) m io1;
           eliminate exists (io2: nat -> renaming).
@@ -433,7 +433,7 @@ let next_young (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (pr
 /// The loop
 /// ---------------------------------------------------------------------------
 
-let next (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let next (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming)
   : Lemma (requires components_ok c /\ good c prog /\ lst c sty n ny es s prog a b cs m io /\ m < L.length prog)
           (ensures goal c sty n ny es s prog a b m)
@@ -442,7 +442,7 @@ let next (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: li
     | RAlloc true _ _ -> next_young c sty n ny es s prog a b cs m io
     | _ -> next_plain c sty n ny es s prog a b cs m io
 
-let rec loop (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a b: nat)
+let rec loop (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (a: slices) (b: nat)
     (cs: list chunk) (m: nat) (io: nat -> renaming)
   : Lemma (requires components_ok c /\ good c prog /\ lst c sty n ny es s prog a b cs m io)
           (ensures stw_replay c sty n ny es s prog)
@@ -460,7 +460,7 @@ let rec loop (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog
 /// The start: `es` up to `s`, then a whole cycle
 /// ---------------------------------------------------------------------------
 
-let pre0_nofail (c: comps) (n ny: nat) (es: list event) (s a b: nat)
+let pre0_nofail (c: comps) (n ny: nat) (es: list event) (s: nat) (a: slices) (b: nat)
   : Lemma (requires no_fail c n ny es /\ s <= L.length es) (ensures no_fail c n ny (pre0 es s a b))
   = let e2 = pre0 es s a b in
     T2.stw_ev es s a b 0;
@@ -473,7 +473,7 @@ let pre0_nofail (c: comps) (n ny: nat) (es: list event) (s a b: nat)
         end in
     C.forall_intro f
 
-let pre0_coll (es: list event) (s a b: nat)
+let pre0_coll (es: list event) (s: nat) (a: slices) (b: nat)
   : Lemma (requires s <= L.length es)
           (ensures s <= L.length (pre0 es s a b) /\
                    (forall (i: nat). s <= i /\ i < L.length (pre0 es s a b) ==> ~(is_mutator_event (ev (pre0 es s a b) i))))
@@ -482,7 +482,7 @@ let pre0_coll (es: list event) (s a b: nat)
       = if s <= i && i < L.length (pre0 es s a b) then T2.stw_ev es s a b (i - s) in
     C.forall_intro f
 
-let init (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (io0: nat -> renaming) (a b: nat)
+let init (c: comps) (sty: style) (n ny: nat) (es: list event) (s: nat) (prog: list revent) (io0: nat -> renaming) (a: slices) (b: nat)
   : Lemma (requires run_pre c sty n ny es /\ no_fail c n ny es /\ tr_upto c n ny es (L.length es) prog io0 /\
                     s <= L.length es /\ run_pre c sty n ny (pre0 es s a b))
           (ensures exists (io: nat -> renaming). lst c sty n ny es s prog a b [] (mc es s) io)
@@ -542,7 +542,7 @@ let replay_of (c: comps) (sty: style) (n ny: nat) (es: list event) (s j: nat) (p
   = good_of c sty n ny es prog io;
     T2.run_pre_elim c sty n ny es;
     T2.stw_exists c sty n ny es s j;
-    eliminate exists (a b: nat). run_pre c sty n ny (T2.es2 es s a b) /\ run_pre c sty n ny es
+    eliminate exists (a: slices) (b: nat). run_pre c sty n ny (T2.es2 es s a b) /\ run_pre c sty n ny es
     with begin
       init c sty n ny es s prog io a b;
       eliminate exists (io1: nat -> renaming). lst c sty n ny es s prog a b [] (mc es s) io1
