@@ -136,6 +136,9 @@ gen_heap_t          gc_gen_heap;
 static uint64_t    *gc_fwd_arr;
 static uint64_t    *gc_queue;         /* BFS queue for Cheney promotion (heap-allocated) */
 static uint8_t     *minor_base;      /* absolute address of minor heap buffer */
+static uint8_t     *nursery_data;    /* the whole nursery, as ensure_heap made it */
+static uint64_t     nursery_bytes;   /*   (minor_base and minor_heap_size_u64
+                                      *    differ only during a native window) */
 static int          heap_initialized = 0;
 static uint64_t    *minor_snapshot;   /* do_full_gc, stw: minor heap before full_gc */
 
@@ -353,11 +356,26 @@ static void read_major_mode(void) {
     if (stats_enabled) atexit(print_major_stats);
 }
 
+/* VERGC_CHECK_NURSERY (testing): before every verified minor collection,
+ * walk the nursery it is given and abort unless minor_wf holds of it (see
+ * nursery_check_walk).  With VERGC_MAJOR_STATS too, the walks are counted on
+ * stderr at exit (only then, so that the check alone changes no output). */
+static int      nursery_check = 0;
+static uint64_t check_walks, check_nonempty, check_padded;
+
+static void print_nursery_check(void) {
+    fprintf(stderr, "vergc-nursery-check: walks=%lu nonempty=%lu padded=%lu\n",
+            (unsigned long)check_walks, (unsigned long)check_nonempty,
+            (unsigned long)check_padded);
+}
+
 static void ensure_heap(void) {
     if (heap_initialized) return;
     heap_initialized = 1;
     atexit(gc_print_profile);
     read_major_mode();
+    nursery_check = env_flag("VERGC_CHECK_NURSERY");
+    if (nursery_check && stats_enabled) atexit(print_nursery_check);
 
     /* --- Major heap --- */
     size_t major_words = 32 * 1024 * 1024;  /* 256 MB / 8 = 32M words */
@@ -455,6 +473,12 @@ static void ensure_heap(void) {
     }
     if (minor_words < (size_t)Max_young_wosize + 1)
         minor_words = (size_t)Max_young_wosize + 1;
+#ifdef NATIVE_CODE
+    /* One word more on native: room for the padding block of
+     * native_window_open below the blocks in every case (see there). */
+    if (minor_words < (size_t)Max_young_wosize + 2)
+        minor_words = (size_t)Max_young_wosize + 2;
+#endif
     size_t minor_sz = minor_words * 8;
     minor_heap_size_u64 = (uint64_t)minor_sz;
 
@@ -464,6 +488,8 @@ static void ensure_heap(void) {
     if (!minor_data)
         caml_fatal_error("verified gen GC: cannot allocate minor heap");
     minor_base = minor_data;
+    nursery_data = minor_data;
+    nursery_bytes = (uint64_t)minor_sz;
 
     gc_gen_heap.minor.data = minor_data;
     gc_gen_heap.minor.size = minor_sz;
@@ -1095,6 +1121,146 @@ static void vergc_native_reset_young_ptr(void);
 #endif
 void verified_do_minor_gc(void);     /* forward decl */
 
+/* --- The nursery the verified minor collection is given --- */
+
+/* The verified minor collection (minor_collect, and full_gc's) requires
+ * minor_wf of the nursery it is given (GC.Gen.MinorHeap): from offset 0, a
+ * chain of headers, none of wosize 0 and none Infix_tag, each block within
+ * bump, landing exactly on bump.  The nursery is gc_gen_heap.minor (data,
+ * size, bump_ref) with minor_base_addr and minor_heap_size_u64, and the
+ * copies krmlinit_globals derives from the size (minor_heap_size_sz,
+ * queue_size_sz); the interface also asks (max_young_wosize + 1) * 8 <=
+ * minor_heap_size (GC.Gen.Base).
+ *
+ * Bytecode allocates bottom-up through bump_ref, so the nursery as
+ * ensure_heap made it is that chain.  Native code allocates top-down: the
+ * blocks run from young_ptr to young_alloc_end (stock's layout; see
+ * docs/gc-interfaces-design.md, 18.9), and offset 0 of the whole nursery is
+ * below them.  So, for the length of each verified minor collection, native
+ * code gives it the window that holds just the blocks (native_window_open),
+ * and restores the whole nursery after (native_window_close).  The window
+ * is closed whenever anything else runs: pacing, the barrier
+ * (modify_field reads minor_base_addr and minor_heap_size_u64) and the
+ * program all see the whole nursery. */
+#define VERGC_WINDOW_MIN ((uint64_t)(Max_young_wosize + 1) * 8)
+
+/* VERGC_CHECK_NURSERY: the walk minor_chain_valid and minor_chain_no_infix
+ * make (wosize = header >> 10, tag = header & 0xFF), and the nursery's
+ * configuration, checked before the verified collection runs. */
+static void nursery_check_walk(void) {
+    const uint8_t *d = gc_gen_heap.minor.data;
+    uint64_t size = minor_heap_size_u64;
+    uint64_t bump = *gc_gen_heap.minor.bump_ref;
+    uint64_t pos = 0;
+    if (d != minor_base || (uint64_t)(uintptr_t)d != minor_base_addr ||
+        (uint64_t)gc_gen_heap.minor.size != size ||
+        (uint64_t)minor_heap_size_sz != size || (uint64_t)queue_size_sz != size / 8 ||
+        size % 8 != 0 || size < 32 || size < VERGC_WINDOW_MIN ||
+        bump % 8 != 0 || bump > size)
+        caml_fatal_error("verified gen GC: nursery check: bad configuration "
+                         "(size %lu, bump %lu)", (unsigned long)size, (unsigned long)bump);
+    while (pos + 8 <= bump) {
+        uint64_t hd = *(const uint64_t *)(d + pos);
+        uint64_t wz = hd >> 10;
+        if (wz == 0)
+            caml_fatal_error("verified gen GC: nursery check: wosize 0 at offset %lu "
+                             "(bump %lu)", (unsigned long)pos, (unsigned long)bump);
+        if ((hd & 0xFF) == Infix_tag)
+            caml_fatal_error("verified gen GC: nursery check: Infix_tag header at "
+                             "offset %lu", (unsigned long)pos);
+        if (wz > (bump - pos) / 8 - 1)
+            caml_fatal_error("verified gen GC: nursery check: block at offset %lu "
+                             "(wosize %lu) passes bump %lu", (unsigned long)pos,
+                             (unsigned long)wz, (unsigned long)bump);
+        pos += (wz + 1) * 8;
+    }
+    if (pos != bump)
+        caml_fatal_error("verified gen GC: nursery check: walk ends at %lu, not bump %lu",
+                         (unsigned long)pos, (unsigned long)bump);
+    check_walks++;
+    if (bump != 0) check_nonempty++;
+}
+
+#ifdef NATIVE_CODE
+/* The window: base young_ptr, size and bump the bytes used.  When those are
+ * fewer than VERGC_WINDOW_MIN, a padding block goes just below young_ptr:
+ * one dead Abstract_tag (no-scan) block, nothing points to it, bringing the
+ * size to VERGC_WINDOW_MIN, or to 16 bytes of padding when only 8 would be
+ * needed (the chain allows no wosize 0).  That fits: the nursery has at
+ * least VERGC_WINDOW_MIN + 8 bytes (ensure_heap), so below young_ptr there
+ * are nursery - used >= pad bytes.  An empty nursery: the top
+ * VERGC_WINDOW_MIN bytes, bump 0, no block written.  A full one needs no
+ * padding (used = the nursery >= VERGC_WINDOW_MIN). */
+static void native_window_open(void) {
+    uint8_t *ptr = (uint8_t *)Caml_state->_young_ptr;
+    uint8_t *lo  = (uint8_t *)Caml_state->_young_alloc_start;
+    uint8_t *hi  = (uint8_t *)Caml_state->_young_alloc_end;
+    uint8_t *base;
+    uint64_t size, bump;
+    if (ptr < lo || ptr > hi || ((uintptr_t)ptr & 7) != 0)
+        caml_fatal_error("verified gen GC: young_ptr outside the nursery at a minor collection");
+    uint64_t used = (uint64_t)(hi - ptr);
+    if (used == 0) {
+        base = hi - VERGC_WINDOW_MIN;
+        size = VERGC_WINDOW_MIN;
+        bump = 0;
+    } else {
+        uint64_t pad = 0;
+        if (used < VERGC_WINDOW_MIN) {
+            pad = VERGC_WINDOW_MIN - used;
+            if (pad < 16) pad = 16;
+        }
+        if (pad > (uint64_t)(ptr - lo))
+            caml_fatal_error("verified gen GC: no room below the nursery's blocks "
+                             "for the padding block");
+        base = ptr - pad;
+        if (pad != 0) {
+            *(header_t *)base = Make_header(Wsize_bsize(pad) - 1, Abstract_tag, 0);
+            if (nursery_check) check_padded++;
+        }
+        size = used + pad;
+        bump = size;
+    }
+    gc_gen_heap.minor.data = base;
+    gc_gen_heap.minor.size = (size_t)size;
+    minor_base = base;
+    minor_base_addr = (uint64_t)(uintptr_t)base;
+    minor_heap_size_u64 = size;
+    *gc_gen_heap.minor.bump_ref = bump;
+    krmlinit_globals();
+}
+
+/* The whole nursery again.  The collection emptied it (bump 0); young_ptr
+ * is reset by the caller (vergc_native_reset_young_ptr). */
+static void native_window_close(void) {
+    if (nursery_check && *gc_gen_heap.minor.bump_ref != 0)
+        caml_fatal_error("verified gen GC: nursery check: bump %lu after a collection",
+                         (unsigned long)*gc_gen_heap.minor.bump_ref);
+    gc_gen_heap.minor.data = nursery_data;
+    gc_gen_heap.minor.size = (size_t)nursery_bytes;
+    minor_base = nursery_data;
+    minor_base_addr = (uint64_t)(uintptr_t)nursery_data;
+    minor_heap_size_u64 = nursery_bytes;
+    *gc_gen_heap.minor.bump_ref = 0;
+    krmlinit_globals();
+}
+#endif
+
+/* Around every verified minor collection: the root gathering (which turns
+ * nursery addresses into offsets) to the roots' write-back. */
+static inline void nursery_begin(void) {
+#ifdef NATIVE_CODE
+    native_window_open();
+#endif
+    if (nursery_check) nursery_check_walk();
+}
+
+static inline void nursery_end(void) {
+#ifdef NATIVE_CODE
+    native_window_close();
+#endif
+}
+
 /* Core minor GC implementation, at the collector's phase.  Leaves the
  * rewritten roots in root_values (so start_cycle can darken them right
  * after) and returns the words promoted.  A promotion failure is fatal. */
@@ -1102,6 +1268,8 @@ static uint64_t do_minor_gc_core(void) {
 
     PROF_INC(minor_gc_count);
     PROF_START(minor_gc_total);
+
+    nursery_begin();
 
     /* 1. Collect roots */
     PROF_START(root_scan);
@@ -1167,6 +1335,8 @@ static uint64_t do_minor_gc_core(void) {
 
     /* 7. Clear ref_table */
     Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
+
+    nursery_end();
 
     PROF_END(minor_gc_total);
     return promoted;
@@ -1312,12 +1482,11 @@ void vergc_native_minor_startup_init(void) {
  * young_alloc_end); bump_ref counts bytes used, bottom-up.  The two
  * conventions differ in DIRECTION, but "how many bytes are in use" is the
  * same number in both.
-
- * Setting bump_ref to number of bytes used would mean that minor heap is occupied
- * from [0, bump_ref) - but that is not the case as native code fills the minor heap 
- * from high end. But, our verified gc only uses bump_ref to know how many bytes are used
- * and never walks from [0, bump_ref] - so this is safe to do until we make our verified gc
- * match the native code's allocation direction.
+ *
+ * Outside a collection bump_ref is only that count (the pacing and the
+ * statistics read it).  The verified collection itself walks [0, bump) of
+ * the nursery it is given, so it is given the window native_window_open
+ * makes, whose offset 0 is the first block (or the padding block).
  */
 static void vergc_sync_bump_ref_from_young_ptr(void) {
      uint64_t used_bytes = (uint64_t)((uint8_t *)Caml_state->_young_alloc_end
@@ -1434,6 +1603,8 @@ static void do_full_gc_stw(void) {
             (double)(*gc_gen_heap.minor.bump_ref / sizeof(value));
     }
 
+    nursery_begin();
+
     /* Build the minor-collection root set: OCaml roots plus remembered slots. */
     PROF_START(root_scan);
     collect_minor_roots_and_refs();
@@ -1458,7 +1629,8 @@ static void do_full_gc_stw(void) {
      * header cannot be read afterwards.  It also zeroizes the minor heap, so
      * keep a copy of the minor headers for promoted_words. */
     if (minor_snapshot == NULL) {
-        minor_snapshot = (uint64_t *)malloc((size_t)minor_heap_size_u64);
+        /* The whole nursery: a native window is at most that. */
+        minor_snapshot = (uint64_t *)malloc((size_t)nursery_bytes);
         if (!minor_snapshot)
             caml_fatal_error("verified gen GC: cannot allocate minor snapshot");
     }
@@ -1484,6 +1656,8 @@ static void do_full_gc_stw(void) {
     PROF_START(writeback);
     write_back_forwarded_roots();
     PROF_END(writeback);
+
+    nursery_end();
 
     Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
     /* The cycle has ended: the heap is the live data, the words the mark
