@@ -81,9 +81,9 @@ let es_seq : list event = [
   ERead (M.Major xA) 0;                      (* 7: read A.0 (B) into a root *)
   EStart;                                    (* 8 *)
   EMinor;                                    (* 9: while marking *)
-  ESlice;                                    (* 10: B *)
-  ESlice;                                    (* 11: A, greys K *)
-  ESlice;                                    (* 12: K *)
+  ESlice MK.sl_B;                                    (* 10: B *)
+  ESlice MK.sl_A;                                    (* 11: A, greys K *)
+  ESlice MK.sl_K;                                    (* 12: K *)
   EHandover;                                 (* 13 *)
   ESweep;                                    (* 14: the free block *)
   EMinor;                                    (* 15: while sweeping *)
@@ -275,40 +275,43 @@ let h10 () : Lemma (requires ff_room) (ensures holds (cs 10) d9)
 
 let h11 () : Lemma (requires ff_room) (ensures holds (cs 11) d11)
   = h10 (); holds_brep (cs 10) d9; len_seq (); xs ();
-    assert_norm (ev es_seq 10 == ESlice);
-    next 10 ESlice;
+    assert_norm (ev es_seq 10 == ESlice MK.sl_B);
+    next 10 (ESlice MK.sl_B);
     blk st7 xB;
     MK.scan_B st7;
     low7 ();
     MK.slice_B st7;
+    MK.mv_B st7;
     OK.recol_ok st7 xB M.Black;
     recol_B st7 M.Black;
-    step_slice (cs 10) d9 xB st8
+    step_slice (cs 10) d9 xB st8 MK.sl_B
 
 let h12 () : Lemma (requires ff_room) (ensures holds (cs 12) d12)
   = h11 (); holds_brep (cs 11) d11; len_seq (); xs ();
-    assert_norm (ev es_seq 11 == ESlice);
-    next 11 ESlice;
+    assert_norm (ev es_seq 11 == ESlice MK.sl_A);
+    next 11 (ESlice MK.sl_A);
     blk st8 xA; blk st8 xB; res_k2 st8;
     MK.scan_A st8;
     low8 ();
     MK.slice_A st8;
+    MK.mv_A st8;
     OK.recol_ok st8 xA M.Black;
     OK.recol_ok (recol st8 xA M.Black) xK M.Grey;
     recol_A st8 M.Black; recol_K ({ st8 with ca = Some M.Black }) M.Grey;
-    step_slice (cs 11) d11 xA st9
+    step_slice (cs 11) d11 xA st9 MK.sl_A
 
 let h13 () : Lemma (requires ff_room) (ensures holds (cs 13) d13)
   = h12 (); holds_brep (cs 12) d12; len_seq (); xs ();
-    assert_norm (ev es_seq 12 == ESlice);
-    next 12 ESlice;
+    assert_norm (ev es_seq 12 == ESlice MK.sl_K);
+    next 12 (ESlice MK.sl_K);
     blk st9 xK;
     MK.scan_K st9;
     low9 ();
     MK.slice_K st9;
+    MK.mv_K st9;
     OK.recol_ok st9 xK M.Black;
     recol_K st9 M.Black;
-    step_slice (cs 12) d12 xK st10
+    step_slice (cs 12) d12 xK st10 MK.sl_K
 
 let h14 () : Lemma (requires ff_room) (ensures holds (cs 14) d14)
   = h13 (); len_seq ();
@@ -510,21 +513,21 @@ let ok9 () : Lemma (requires ff_room /\ L.length es_seq == 25) (ensures ok_at Se
 
 let ok10 () : Lemma (requires ff_room /\ L.length es_seq == 25) (ensures ok_at Sequential (cs 10) (ev es_seq 10))
   = h10 (); len_seq (); xs ();
-    assert_norm (ev es_seq 10 == ESlice);
+    assert_norm (ev es_seq 10 == ESlice MK.sl_B);
     blk st7 xB;
-    ok_slice Sequential (cs 10) d9 xB
+    MK.mv_B st7; ok_slice Sequential (cs 10) d9 xB MK.sl_B
 
 let ok11 () : Lemma (requires ff_room /\ L.length es_seq == 25) (ensures ok_at Sequential (cs 11) (ev es_seq 11))
   = h11 (); len_seq (); xs ();
-    assert_norm (ev es_seq 11 == ESlice);
+    assert_norm (ev es_seq 11 == ESlice MK.sl_A);
     blk st8 xA;
-    ok_slice Sequential (cs 11) d11 xA
+    MK.mv_A st8; ok_slice Sequential (cs 11) d11 xA MK.sl_A
 
 let ok12 () : Lemma (requires ff_room /\ L.length es_seq == 25) (ensures ok_at Sequential (cs 12) (ev es_seq 12))
   = h12 (); len_seq (); xs ();
-    assert_norm (ev es_seq 12 == ESlice);
+    assert_norm (ev es_seq 12 == ESlice MK.sl_K);
     blk st9 xK;
-    ok_slice Sequential (cs 12) d12 xK
+    MK.mv_K st9; ok_slice Sequential (cs 12) d12 xK MK.sl_K
 
 let ok13 () : Lemma (requires ff_room /\ L.length es_seq == 25) (ensures ok_at Sequential (cs 13) (ev es_seq 13))
   = h13 (); len_seq (); xs ();

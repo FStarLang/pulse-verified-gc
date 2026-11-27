@@ -202,8 +202,8 @@ let slice_dx (sty: style) (x: config pc) (cA cB cK: M.colour) (hasC: bool) (n: i
                     anygrey cA cB cK)
           (ensures (let t = PWK.fg x in
                     ((t == xA () /\ cA == M.Grey) \/ (t == xB () /\ cB == M.Grey) \/ (t == xK () /\ cK == M.Grey)) /\
-                    holds (step pc x ESlice) (dx DM (ngA t cA) (ngB t cB) (ngK t cK) hasC (M.VInt n) ex rs j ys ym) /\
-                    RA.conds pc sty x ESlice /\ GC.Spec.Top.Transp.alloc_succeeds x ESlice))
+                    holds (step pc x (PWK.esl x)) (dx DM (ngA t cA) (ngB t cB) (ngK t cK) hasC (M.VInt n) ex rs j ys ym) /\
+                    RA.conds pc sty x (PWK.esl x) /\ GC.Spec.Top.Transp.alloc_succeeds x (PWK.esl x)))
   = let d = dx DM cA cB cK hasC (M.VInt n) ex rs j ys ym in
     slpre_dx x cA cB cK hasC n ex rs j ys ym;
     PWK.step_slice x d;
@@ -216,9 +216,9 @@ let slice_dx (sty: style) (x: config pc) (cA cB cK: M.colour) (hasC: bool) (n: i
       = TM.edge_b_iff (mx x) t y;
         edges_dx x DM cA cB cK hasC n ex rs j ys ym t y in
     FStar.Classical.forall_intro pt;
-    holds_ext (step pc x ESlice) (PWK.dslice x d) d';
+    holds_ext (step pc x (PWK.esl x)) (PWK.dslice x d) d';
     enabled_slice x d;
-    conds_of sty x d ESlice
+    conds_of sty x d (PWK.esl x)
 #pop-options
 
 /// ---------------------------------------------------------------------------

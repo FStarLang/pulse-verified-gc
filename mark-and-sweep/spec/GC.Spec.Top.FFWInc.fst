@@ -98,9 +98,9 @@ let es_inc : list event = [
   EYoungAlloc 1 0 [vK2];                     (* 10: Y1 *)
   EYoungAlloc 1 0 [iw];                      (* 11: Y2 *)
   EMinor;                                    (* 12: while marking, promotes Y2, Y1 *)
-  ESlice;                                    (* 13: B *)
-  ESlice;                                    (* 14: A *)
-  ESlice;                                    (* 15: K *)
+  ESlice MK.sl_B;                                    (* 13: B *)
+  ESlice MK.sl_A;                                    (* 14: A *)
+  ESlice MK.sl_K;                                    (* 15: K *)
   EHandover;                                 (* 16 *)
   ESweep;                                    (* 17: the free block *)
   EAlloc 1 0 [vA];                           (* 18: E, white *)
@@ -328,40 +328,43 @@ let h13 () : Lemma (requires ff_room) (ensures holds (ci 13) d13)
 
 let h14 () : Lemma (requires ff_room) (ensures holds (ci 14) d14)
   = h13 (); holds_brep (ci 13) d13; len_inc (); xs ();
-    assert_norm (ev es_inc 13 == ESlice);
-    next 13 ESlice;
+    assert_norm (ev es_inc 13 == ESlice MK.sl_B);
+    next 13 (ESlice MK.sl_B);
     blk st10 xB;
     MK.scan_B st10;
     low10 ();
     MK.slice_B st10;
+    MK.mv_B st10;
     OK.recol_ok st10 xB M.Black;
     recol_B st10 M.Black;
-    step_slice (ci 13) d13 xB st11
+    step_slice (ci 13) d13 xB st11 MK.sl_B
 
 let h15 () : Lemma (requires ff_room) (ensures holds (ci 15) d15)
   = h14 (); holds_brep (ci 14) d14; len_inc (); xs ();
-    assert_norm (ev es_inc 14 == ESlice);
-    next 14 ESlice;
+    assert_norm (ev es_inc 14 == ESlice MK.sl_A);
+    next 14 (ESlice MK.sl_A);
     blk st11 xA; blk st11 xB; res_k2 st11;
     MK.scan_A st11;
     low11 ();
     MK.slice_A st11;
+    MK.mv_A st11;
     OK.recol_ok st11 xA M.Black;
     OK.recol_ok (recol st11 xA M.Black) xK M.Grey;
     recol_A st11 M.Black; recol_K ({ st11 with ca = Some M.Black }) M.Grey;
-    step_slice (ci 14) d14 xA st12
+    step_slice (ci 14) d14 xA st12 MK.sl_A
 
 let h16 () : Lemma (requires ff_room) (ensures holds (ci 16) d16)
   = h15 (); holds_brep (ci 15) d15; len_inc (); xs ();
-    assert_norm (ev es_inc 15 == ESlice);
-    next 15 ESlice;
+    assert_norm (ev es_inc 15 == ESlice MK.sl_K);
+    next 15 (ESlice MK.sl_K);
     blk st12 xK;
     MK.scan_K st12;
     low12 ();
     MK.slice_K st12;
+    MK.mv_K st12;
     OK.recol_ok st12 xK M.Black;
     recol_K st12 M.Black;
-    step_slice (ci 15) d15 xK st13
+    step_slice (ci 15) d15 xK st13 MK.sl_K
 
 let h17 () : Lemma (requires ff_room) (ensures holds (ci 17) d17)
   = h16 (); len_inc ();
@@ -766,24 +769,24 @@ let rel_slice (i: nat) (d d': dsc)
 
 let iv14 () : Lemma (requires ff_room) (ensures ivc 14)
   = iv13 (); h13 (); h14 (); len_inc (); xs ();
-    assert_norm (ev es_inc 13 == ESlice);
-    next 13 ESlice;
+    assert_norm (ev es_inc 13 == ESlice MK.sl_B);
+    next 13 (ESlice MK.sl_B);
     rel_slice 13 d13 d14;
-    IV.inv_slice (ci 13) d13 d14
+    IV.inv_slice (ci 13) d13 d14 MK.sl_B
 
 let iv15 () : Lemma (requires ff_room) (ensures ivc 15)
   = iv14 (); h14 (); h15 (); len_inc (); xs ();
-    assert_norm (ev es_inc 14 == ESlice);
-    next 14 ESlice;
+    assert_norm (ev es_inc 14 == ESlice MK.sl_A);
+    next 14 (ESlice MK.sl_A);
     rel_slice 14 d14 d15;
-    IV.inv_slice (ci 14) d14 d15
+    IV.inv_slice (ci 14) d14 d15 MK.sl_A
 
 let iv16 () : Lemma (requires ff_room) (ensures ivc 16)
   = iv15 (); h15 (); h16 (); len_inc (); xs ();
-    assert_norm (ev es_inc 15 == ESlice);
-    next 15 ESlice;
+    assert_norm (ev es_inc 15 == ESlice MK.sl_K);
+    next 15 (ESlice MK.sl_K);
     rel_slice 15 d15 d16;
-    IV.inv_slice (ci 15) d15 d16
+    IV.inv_slice (ci 15) d15 d16 MK.sl_K
 
 /// At hand-over: no grey, and no dark block points to a white one.
 let ng13 () : Lemma (requires ff_room) (ensures T.no_grey (mk st13)) = xs ()
@@ -986,13 +989,13 @@ let ok12 () : Lemma (requires ff_room /\ ln == 34) (ensures ok_at Incremental (c
   = h12 (); assert_norm (ev es_inc 12 == EMinor); ok_minor Incremental (ci 12) (d12 ())
 
 let ok13 () : Lemma (requires ff_room /\ ln == 34) (ensures ok_at Incremental (ci 13) (ev es_inc 13))
-  = h13 (); xs (); assert_norm (ev es_inc 13 == ESlice); blk st10 xB; ok_slice Incremental (ci 13) d13 xB
+  = h13 (); xs (); assert_norm (ev es_inc 13 == ESlice MK.sl_B); blk st10 xB; MK.mv_B st10; ok_slice Incremental (ci 13) d13 xB MK.sl_B
 
 let ok14 () : Lemma (requires ff_room /\ ln == 34) (ensures ok_at Incremental (ci 14) (ev es_inc 14))
-  = h14 (); xs (); assert_norm (ev es_inc 14 == ESlice); blk st11 xA; ok_slice Incremental (ci 14) d14 xA
+  = h14 (); xs (); assert_norm (ev es_inc 14 == ESlice MK.sl_A); blk st11 xA; MK.mv_A st11; ok_slice Incremental (ci 14) d14 xA MK.sl_A
 
 let ok15 () : Lemma (requires ff_room /\ ln == 34) (ensures ok_at Incremental (ci 15) (ev es_inc 15))
-  = h15 (); xs (); assert_norm (ev es_inc 15 == ESlice); blk st12 xK; ok_slice Incremental (ci 15) d15 xK
+  = h15 (); xs (); assert_norm (ev es_inc 15 == ESlice MK.sl_K); blk st12 xK; MK.mv_K st12; ok_slice Incremental (ci 15) d15 xK MK.sl_K
 
 let ok16 () : Lemma (requires ff_room /\ ln == 34) (ensures ok_at Incremental (ci 16) (ev es_inc 16))
   = h16 (); ng13 (); assert_norm (ev es_inc 16 == EHandover); ok_handover Incremental (ci 16) d16

@@ -334,33 +334,33 @@ let ex13_ok () : Lemma (requires pw_room /\ cok)
 /// 13-15: three slices, in the order the mark chooses
 /// ---------------------------------------------------------------------------
 
-let x14 () : GTot (config pc) = step pc (x13 ()) ESlice
-let x15 () : GTot (config pc) = step pc (x14 ()) ESlice
-let x16 () : GTot (config pc) = step pc (x15 ()) ESlice
+let x14 () : GTot (config pc) = step pc (x13 ()) (PWK.esl (x13 ()))
+let x15 () : GTot (config pc) = step pc (x14 ()) (PWK.esl (x14 ()))
+let x16 () : GTot (config pc) = step pc (x15 ()) (PWK.esl (x15 ()))
 
 let sl (x: config pc) (cA cB cK: M.colour)
   : Lemma (requires pw_room /\ cok /\ holds x (dM cA cB cK) /\ anygrey cA cB cK)
           (ensures (let t = PWK.fg x in
                     ((t == xA () /\ cA == M.Grey) \/ (t == xB () /\ cB == M.Grey) \/ (t == xK () /\ cK == M.Grey)) /\
-                    holds (step pc x ESlice) (dM (ngA t cA) (ngB t cB) (ngK t cK)) /\ ok x ESlice))
+                    holds (step pc x (PWK.esl x)) (dM (ngA t cA) (ngB t cB) (ngK t cK)) /\ ok x (PWK.esl x)))
   = ex13_ok ();
     slice_dx ic x cA cB cK true 1 (ex13 ()) (rs13 ()) 7 ms0 (M.empty_heap ywords)
 
 let c14 () : Lemma (requires pw_room /\ cok)
   (ensures (holds (x14 ()) (dM M.Black M.Grey M.White) \/ holds (x14 ()) (dM M.Grey M.Black M.Grey)) /\
-           ok (x13 ()) ESlice)
+           ok (x13 ()) (PWK.esl (x13 ())))
   = c13 (); distinct ();
     sl (x13 ()) M.Grey M.Grey M.White
 
 let c15 () : Lemma (requires pw_room /\ cok)
   (ensures (holds (x15 ()) (dM M.Black M.Black M.Grey) \/ holds (x15 ()) (dM M.Grey M.Black M.Black)) /\
-           ok (x14 ()) ESlice)
+           ok (x14 ()) (PWK.esl (x14 ())))
   = c14 (); distinct ();
     FStar.Classical.move_requires (sl (x14 ()) M.Black M.Grey) M.White;
     FStar.Classical.move_requires (sl (x14 ()) M.Grey M.Black) M.Grey
 
 let c16 () : Lemma (requires pw_room /\ cok)
-  (ensures holds (x16 ()) (dM M.Black M.Black M.Black) /\ ok (x15 ()) ESlice)
+  (ensures holds (x16 ()) (dM M.Black M.Black M.Black) /\ ok (x15 ()) (PWK.esl (x15 ())))
   = c15 (); distinct ();
     FStar.Classical.move_requires (sl (x15 ()) M.Black M.Black) M.Grey;
     FStar.Classical.move_requires (sl (x15 ()) M.Grey M.Black) M.Black

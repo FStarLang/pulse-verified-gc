@@ -67,14 +67,14 @@ noeq type dsc = {
 let holds (x: config fc) (d: dsc) : prop =
   x.stopped == false /\ x.ph == d.dph /\ U64.v (x.ast <: ffst).fp == base + 8 /\
   brepr (mk d.dst) x.w.cmaj /\ x.w.cyng == d.dys /\ Y.yrepr d.dym d.dys /\
-  x.w.croots == d.drt /\ x.w.crem == [] /\
+  x.w.croots == d.drt /\ x.w.crem == [] /\ x.ms == None /\
   brep_ok (mk d.dst) /\ R.canonical (mk d.dst)
 
 let holds_def (x: config fc) (d: dsc)
   : Lemma (holds x d <==>
            (x.stopped == false /\ x.ph == d.dph /\ U64.v (x.ast <: ffst).fp == base + 8 /\
             brepr (mk d.dst) x.w.cmaj /\ x.w.cyng == d.dys /\ Y.yrepr d.dym d.dys /\
-            x.w.croots == d.drt /\ x.w.crem == [] /\
+            x.w.croots == d.drt /\ x.w.crem == [] /\ x.ms == None /\
             brep_ok (mk d.dst) /\ R.canonical (mk d.dst)))
   = reveal_opaque (`%holds) (holds x d)
 
@@ -82,7 +82,7 @@ let reveal_holds (_: unit)
   : Lemma (forall (x: config fc) (d: dsc). holds x d <==>
            (x.stopped == false /\ x.ph == d.dph /\ U64.v (x.ast <: ffst).fp == base + 8 /\
             brepr (mk d.dst) x.w.cmaj /\ x.w.cyng == d.dys /\ Y.yrepr d.dym d.dys /\
-            x.w.croots == d.drt /\ x.w.crem == [] /\
+            x.w.croots == d.drt /\ x.w.crem == [] /\ x.ms == None /\
             brep_ok (mk d.dst) /\ R.canonical (mk d.dst)))
   = FStar.Classical.forall_intro_2 holds_def
 
@@ -328,29 +328,30 @@ let step_start (x: config fc) (d: dsc) (st': wst)
 #pop-options
 
 let slice_parts (g: heap) (m m': M.mheap) (t: nat)
-  : Lemma (requires brepr m g /\ M.is_block m t /\ M.col_of m t == M.Grey /\
-                    (forall (o: nat). o < t /\ M.is_block m o ==> M.col_of m o <> M.Grey) /\
-                    BM.scan_ok m t /\ R.heq (TM.tmslice_with m t) m')
-          (ensures brepr m' (BM.bslice g))
-  = brep_size_of m g;
-    find_grey_low m msize t;
-    find_grey_heq m (cabs g) msize;
-    BM.scan_ok_heq m (cabs g) t;
-    BM.scan_obj_cabs g t;
-    BM.tmslice_heq m (cabs g) t
+  : Lemma (requires brepr m g /\ M.well_formed m /\ M.is_block m t /\ M.col_of m t == M.Grey /\
+                    R.heq (TM.tmslice_with m t) m')
+          (ensures brepr m' (fst (T.mmoves BM.bmark g None (BM.obj_mv m t))) /\
+                   snd (T.mmoves BM.bmark g None (BM.obj_mv m t)) == None)
+  = BM.obj_moves_bytes g m t;
+    let g' = fst (T.mmoves BM.bmark g None (BM.obj_mv m t)) in
+    R.heq_sym (TM.tmslice_with m t) m';
+    R.heq_trans m' (TM.tmslice_with m t) (cabs g')
 
-/// **ESlice**: the lowest grey block is scanned.
+/// **ESlice**: a grey block scanned whole (its moves, `BM.obj_mv`).
 #push-options "--z3rlimit 40"
-let step_slice (x: config fc) (d: dsc) (t: nat) (st': wst)
+let step_slice (x: config fc) (d: dsc) (t: nat) (st': wst) (mvs: list T.move)
   : Lemma (requires holds x d /\ M.is_block (mk d.dst) t /\ M.col_of (mk d.dst) t == M.Grey /\
-                    (forall (o: nat). o < t /\ M.is_block (mk d.dst) o ==> M.col_of (mk d.dst) o <> M.Grey) /\
-                    BM.scan_ok (mk d.dst) t /\ R.heq (TM.tmslice_with (mk d.dst) t) (mk st') /\
+                    mvs == BM.obj_mv (mk d.dst) t /\ R.heq (TM.tmslice_with (mk d.dst) t) (mk st') /\
                     okm (mk st'))
-          (ensures holds (step fc x ESlice) ({ d with dst = st' }))
+          (ensures holds (step fc x (ESlice mvs)) ({ d with dst = st' }))
   = okm_def (mk st');
-    reveal_holds ();
+    holds_def x d;
+    let x' = step fc x (ESlice mvs) in
+    holds_def x' ({ d with dst = st' });
+    reveal_opaque (`%brep_ok) (brep_ok (mk d.dst));
     slice_parts x.w.cmaj (mk d.dst) (mk st') t;
-    assert (fc.m.T.mslice x.w.cmaj == BM.bslice x.w.cmaj)
+    assert (fc.m == BM.bmark);
+    assert (x'.w.cmaj == fst (T.mmoves BM.bmark x.w.cmaj None mvs) /\ x'.ms == snd (T.mmoves BM.bmark x.w.cmaj None mvs))
 #pop-options
 
 /// **EHandover**: the sweep starts at the bottom.

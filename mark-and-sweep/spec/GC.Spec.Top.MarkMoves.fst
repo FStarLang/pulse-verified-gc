@@ -330,3 +330,36 @@ let rec moves_repr (#t #yt: Type0) (r: rep t yt) (mk: mark t yt) (h: t) (ms: mk.
       move_inv m sc s a mv;
       let (h1, ms1) = mk.mmove h ms mv in
       moves_repr r mk h1 ms1 tl (move_heap m sc mv) s a
+
+/// ---------------------------------------------------------------------------
+/// For instances and witness runs
+/// ---------------------------------------------------------------------------
+
+/// A move keeps the heap well formed.
+let move_wf (m: mheap) (sc: scan) (mv: move)
+  : Lemma (requires well_formed m /\ move_ok m sc mv) (ensures well_formed (move_heap m sc mv))
+  = match mv with
+    | MBegin _ -> ()
+    | MGrey -> let Some (o, i) = sc in grey_col m o i 0; co_wf m (darken_field m o i)
+    | MBlack o -> black_col m o 0; co_wf m (set_col m o Black)
+
+/// Heaps with the same headers and words allow the same moves, to such heaps.
+let field_target_heq (m m': mheap) (o i: nat)
+  : Lemma (requires heq m m') (ensures field_target m o i == field_target m' o i)
+  = assert (ptr_field m o i == ptr_field m' o i);
+    assert (field m o i == field m' o i);
+    match field m o i with
+    | VPtr (Major a) -> assert (resolve m a == resolve m' a)
+    | _ -> ()
+
+let move_heq (m m': mheap) (sc: scan) (mv: move)
+  : Lemma (requires heq m m') (ensures move_ok m sc mv == move_ok m' sc mv /\ heq (move_heap m sc mv) (move_heap m' sc mv))
+  = match mv, sc with
+    | MGrey, Some (o, i) -> field_target_heq m m' o i
+    | _ -> ()
+
+let rec moves_ok_heq (m m': mheap) (sc: scan) (mvs: list move)
+  : Lemma (requires heq m m') (ensures moves_ok m sc mvs == moves_ok m' sc mvs) (decreases mvs)
+  = match mvs with
+    | [] -> ()
+    | mv :: tl -> move_heq m m' sc mv; moves_ok_heq (move_heap m sc mv) (move_heap m' sc mv) (move_scan sc mv) tl

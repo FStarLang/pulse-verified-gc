@@ -814,8 +814,9 @@ fn minor2 (c: cstate) (fa q yr: A.array U64.t) (k0: SZ.t) (#p: perm) (#yv: erase
 /// **`EHandover`**, after a minor collection: the remembered set is empty
 /// when the sweep starts (design doc §18, step 2).  Returns false when the
 /// collection's allocation failed: the run has stopped before the
-/// hand-over.  The mark is done after the collection (`mark_done`: a fact
-/// of the mark, linked in step 4).
+/// hand-over.  The mark is done after the collection, with nothing being
+/// scanned (`mark_done`, `None? (scan_of _)`: facts of the mark, linked in
+/// step 4).
 #push-options "--z3rlimit 40"
 fn handover2 (c: cstate) (fa q yr: A.array U64.t) (k0: SZ.t) (#p: perm) (#yv: erased (Seq.seq U64.t))
   (#sty: erased style) (#es: erased (list event))
@@ -824,7 +825,8 @@ fn handover2 (c: cstate) (fa q yr: A.array U64.t) (k0: SZ.t) (#p: perm) (#yv: er
                  Seq.length yv == SZ.v k0 /\
                  yv == LV.yroots (Y.ycabs (CP.xc es).w.cyng) (CP.xc es).w.croots /\
                  SZ.fits (SZ.v k0 + L.length (CP.xc es).w.crem) /\
-                 T.Marking? (CP.xc es).ph /\ T.mark_done (mj (step CP.pc (CP.xc es) EMinor)))
+                 T.Marking? (CP.xc es).ph /\ T.mark_done (mj (step CP.pc (CP.xc es) EMinor)) /\
+                 None? (scan_of (step CP.pc (CP.xc es) EMinor)))
   returns ok: bool
   ensures (exists* fv' qv'. A.pts_to fa fv' ** A.pts_to q qv') ** A.pts_to yr #p yv **
           (if ok then crep2 c sty (L.append (L.append es [EMinor]) [EHandover])

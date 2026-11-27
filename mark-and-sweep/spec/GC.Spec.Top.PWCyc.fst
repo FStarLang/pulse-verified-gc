@@ -256,8 +256,8 @@ let slice_dd (sty: style) (x: config pc) (cA cB cK: M.colour) (hasC: bool) (rs: 
   : Lemma (requires pw_room /\ cok /\ holds x (ddv DM cA cB cK hasC rs j) /\ anygrey cA cB cK)
           (ensures (let t = PWK.fg x in
                     ((t == xA () /\ cA == M.Grey) \/ (t == xB () /\ cB == M.Grey) \/ (t == xK () /\ cK == M.Grey)) /\
-                    holds (step pc x ESlice) (ddv DM (ngA t cA) (ngB t cB) (ngK t cK) hasC rs j) /\
-                    RA.conds pc sty x ESlice /\ GC.Spec.Top.Transp.alloc_succeeds x ESlice))
+                    holds (step pc x (PWK.esl x)) (ddv DM (ngA t cA) (ngB t cB) (ngK t cK) hasC rs j) /\
+                    RA.conds pc sty x (PWK.esl x) /\ GC.Spec.Top.Transp.alloc_succeeds x (PWK.esl x)))
   = let d = ddv DM cA cB cK hasC rs j in
     slpre_dd x cA cB cK hasC rs j;
     PWK.step_slice x d;
@@ -270,9 +270,9 @@ let slice_dd (sty: style) (x: config pc) (cA cB cK: M.colour) (hasC: bool) (rs: 
       = TM.edge_b_iff (mx x) t y;
         edges_dd x DM cA cB cK hasC rs j ms0 (M.empty_heap ywords) t y in
     FStar.Classical.forall_intro pt;
-    holds_ext (step pc x ESlice) (PWK.dslice x d) d';
+    holds_ext (step pc x (PWK.esl x)) (PWK.dslice x d) d';
     enabled_slice x d;
-    conds_of sty x d ESlice
+    conds_of sty x d (PWK.esl x)
 #pop-options
 
 /// ---------------------------------------------------------------------------

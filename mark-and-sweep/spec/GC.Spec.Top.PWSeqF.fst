@@ -23,6 +23,7 @@ open GC.Spec.Top.PWCyc
 open GC.Spec.Top.PWSeq
 open GC.Spec.Top.PWList
 module M = GC.Spec.Top.Heap
+module PWK = GC.Spec.Top.PWMark
 module T = GC.Spec.Top.Iface
 module L = FStar.List.Tot
 module RA = GC.Spec.Top.RunApp
@@ -88,7 +89,7 @@ let take_pre (i: nat)
 
 let pre_take () : Lemma (take 7 (pre14 ()) == [e0; e1; e2 (); e3; e4 (); e5 (); e6 ()] /\
                          take 8 (pre14 ()) == [e0; e1; e2 (); e3; e4 (); e5 (); e6 (); EStart] /\
-                         take 13 (pre14 ()) == [e0; e1; e2 (); e3; e4 (); e5 (); e6 (); EStart; EMinor; ESlice; ESlice; ESlice; EHandover])
+                         take 13 (pre14 ()) == [e0; e1; e2 (); e3; e4 (); e5 (); e6 (); EStart; EMinor; PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover])
   = ()
 #pop-options
 
@@ -99,16 +100,16 @@ let exec_nil (x: config pc) : Lemma (exec pc x [] == x) = ()
 
 let exec13 () : Lemma (exec pc (x0 ()) [e0; e1; e2 (); e3; e4 (); e5 (); e6 ()] == x7 () /\
                        exec pc (x0 ()) [e0; e1; e2 (); e3; e4 (); e5 (); e6 (); EStart] == x8 () /\
-                       exec pc (x0 ()) [e0; e1; e2 (); e3; e4 (); e5 (); e6 (); EStart; EMinor; ESlice; ESlice; ESlice; EHandover] == x13 ())
+                       exec pc (x0 ()) [e0; e1; e2 (); e3; e4 (); e5 (); e6 (); EStart; EMinor; PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover] == x13 ())
   = exec_nil (x7 ()); exec_nil (x8 ()); exec_nil (x13 ());
     exec_cons (x12 ()) EHandover [];
-    exec_cons (x11 ()) ESlice [EHandover];
-    exec_cons (x10 ()) ESlice [ESlice; EHandover];
-    exec_cons (x9 ()) ESlice [ESlice; ESlice; EHandover];
-    exec_cons (x8 ()) EMinor [ESlice; ESlice; ESlice; EHandover];
-    exec_cons (x7 ()) EStart [EMinor; ESlice; ESlice; ESlice; EHandover];
+    exec_cons (x11 ()) (PWK.esl (x11 ())) [EHandover];
+    exec_cons (x10 ()) (PWK.esl (x10 ())) [PWK.esl (x11 ()); EHandover];
+    exec_cons (x9 ()) (PWK.esl (x9 ())) [PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover];
+    exec_cons (x8 ()) EMinor [PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover];
+    exec_cons (x7 ()) EStart [EMinor; PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover];
     exec_cons (x7 ()) EStart [];
-    let l13 = [EStart; EMinor; ESlice; ESlice; ESlice; EHandover] in
+    let l13 = [EStart; EMinor; PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover] in
     exec_cons (x6 ()) (e6 ()) l13; exec_cons (x6 ()) (e6 ()) [EStart]; exec_cons (x6 ()) (e6 ()) [];
     exec_cons (x5 ()) (e5 ()) (e6 () :: l13); exec_cons (x5 ()) (e5 ()) [e6 (); EStart]; exec_cons (x5 ()) (e5 ()) [e6 ()];
     exec_cons (x4 ()) (e4 ()) [e5 (); e6 ()] ; exec_cons (x4 ()) (e4 ()) [e5 (); e6 (); EStart];
@@ -160,30 +161,50 @@ let ev_pre (i: nat)
   : Lemma (requires i < 14) (ensures i < L.length (es_seq ()) /\ ev (es_seq ()) i == L.index (pre14 ()) i)
   = len_pre (); ev_p (pre14 ()) (ksw ()) (post ()) i
 
+/// Positions in lists of 14 and 6 events, over variables (the slices'
+/// events are then not unfolded).
+let idx14 (a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13: event)
+  : Lemma (let l = [a0; a1; a2; a3; a4; a5; a6; a7; a8; a9; a10; a11; a12; a13] in
+           L.index l 7 == a7 /\ L.index l 8 == a8 /\ L.index l 9 == a9 /\ L.index l 10 == a10 /\
+           L.index l 11 == a11 /\ L.index l 12 == a12 /\ L.index l 13 == a13)
+  = ()
+
+let idx6 (a0 a1 a2 a3 a4 a5: event)
+  : Lemma (let l = [a0; a1; a2; a3; a4; a5] in L.index l 0 == a0 /\ L.index l 5 == a5)
+  = ()
+
 let pre_events () : Lemma (L.index (pre14 ()) 7 == EStart /\ L.index (pre14 ()) 8 == EMinor /\
-                           L.index (pre14 ()) 9 == ESlice /\ L.index (pre14 ()) 10 == ESlice /\
-                           L.index (pre14 ()) 11 == ESlice /\ L.index (pre14 ()) 12 == EHandover /\
+                           L.index (pre14 ()) 9 == PWK.esl (x9 ()) /\ L.index (pre14 ()) 10 == PWK.esl (x10 ()) /\
+                           L.index (pre14 ()) 11 == PWK.esl (x11 ()) /\ L.index (pre14 ()) 12 == EHandover /\
                            L.index (pre14 ()) 13 == EMinor /\
                            L.index (post ()) 0 == EEnd /\ L.index (post ()) 5 == EMinor)
-  = ()
+  = idx14 e0 e1 (e2 ()) e3 (e4 ()) (e5 ()) (e6 ()) EStart EMinor (PWK.esl (x9 ())) (PWK.esl (x10 ())) (PWK.esl (x11 ()))
+          EHandover EMinor;
+    idx6 EEnd (e16 ()) (e17 ()) e18 (e19 ()) EMinor
 #pop-options
 
 let pre7 () : GTot (list event) = [e0; e1; e2 (); e3; e4 (); e5 (); e6 ()]
-let midl : list event = [EStart; EMinor; ESlice; ESlice; ESlice; EHandover; EMinor]
+let midl () : GTot (list event) = [EStart; EMinor; PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover; EMinor]
 
 #push-options "--fuel 16"
-let pre_split () : Lemma (pre14 () == L.append (pre7 ()) midl /\ L.length (pre7 ()) == 7 /\ L.length midl == 7) = ()
+let pre_split () : Lemma (pre14 () == L.append (pre7 ()) (midl ()) /\ L.length (pre7 ()) == 7 /\ L.length (midl ()) == 7) = ()
+
+let mid7 (b c e: event) (i: nat)
+  : Lemma (requires ESlice? b /\ ESlice? c /\ ESlice? e /\ 0 < i /\ i < 7)
+          (ensures (let l = [EStart; EMinor; b; c; e; EHandover; EMinor] in
+                    ~(L.index l i == EStart) /\ ~(L.index l i == EEnd)))
+  = ()
 
 let midl_ev (i: nat)
-  : Lemma (requires 0 < i /\ i < 7) (ensures ~(L.index midl i == EStart) /\ ~(L.index midl i == EEnd))
-  = ()
+  : Lemma (requires 0 < i /\ i < 7) (ensures ~(L.index (midl ()) i == EStart) /\ ~(L.index (midl ()) i == EEnd))
+  = mid7 (PWK.esl (x9 ())) (PWK.esl (x10 ())) (PWK.esl (x11 ())) i
 #pop-options
 
 let pre_mid (t: nat)
   : Lemma (requires 7 < t /\ t < 14)
           (ensures t < L.length (pre14 ()) /\ ~(L.index (pre14 ()) t == EStart) /\ ~(L.index (pre14 ()) t == EEnd))
   = pre_split ();
-    RA.index_app_ge (pre7 ()) midl (t - 7);
+    RA.index_app_ge (pre7 ()) (midl ()) (t - 7);
     midl_ev (t - 7)
 
 /// Between 7 and 14 + k: no start, no end.

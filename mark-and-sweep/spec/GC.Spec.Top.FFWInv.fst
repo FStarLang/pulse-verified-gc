@@ -175,15 +175,15 @@ let inv_start (x: config fc) (d d': dsc)
     assert ((step fc x EStart).w.cmaj == h');
     frame_use T.Marking x.w.cmaj x.ast h' (mk d.dst) (mk d'.dst)
 
-let inv_slice (x: config fc) (d d': dsc)
-  : Lemma (requires holds x d /\ ivx x /\ holds (step fc x ESlice) d' /\
+let inv_slice (x: config fc) (d d': dsc) (mvs: list T.move)
+  : Lemma (requires holds x d /\ ivx x /\ holds (step fc x (ESlice mvs)) d' /\
                     T.inv_frame_rel fc.a d.dph x.ast x.w.cmaj (mk d.dst) (mk d'.dst))
-          (ensures ivx (step fc x ESlice))
+          (ensures ivx (step fc x (ESlice mvs)))
   = holds_def x d;
-    holds_def (step fc x ESlice) d';
-    hyps x ESlice;
-    let h' = fc.m.T.mslice x.w.cmaj in
-    assert ((step fc x ESlice).w.cmaj == h');
+    holds_def (step fc x (ESlice mvs)) d';
+    hyps x (ESlice mvs);
+    let h' = fst (T.mmoves fc.m x.w.cmaj x.ms mvs) in
+    assert ((step fc x (ESlice mvs)).w.cmaj == h');
     frame_use x.ph x.w.cmaj x.ast h' (mk d.dst) (mk d'.dst)
 
 /// ---------------------------------------------------------------------------

@@ -121,7 +121,7 @@ let bk (x: config pc) (d: dsc) (o: nat) (b: bd) : prop =
 
 let holds_body (x: config pc) (d: dsc) : prop =
   x.stopped == false /\ kph x d.dk /\
-  x.w.cyng == d.dys /\ Y.yrepr d.dym d.dys /\ x.w.croots == d.drt /\ x.w.crem == [] /\
+  x.w.cyng == d.dys /\ Y.yrepr d.dym d.dys /\ x.w.croots == d.drt /\ x.w.crem == [] /\ x.ms == None /\
   pa.T.inv x.ph x.w.cmaj (stx x) /\ PWP.kinds_ok (stx x).ps d.dj /\
   M.well_formed (mx x) /\
   (forall (o: nat). iu x o == true ==> Some? (d.db o)) /\
@@ -140,7 +140,7 @@ let reveal_holds (_: unit) : Lemma (forall (x: config pc) (d: dsc). holds x d <=
 let holds_elim (x: config pc) (d: dsc)
   : Lemma (requires holds x d)
           (ensures x.stopped == false /\ kph x d.dk /\
-                   x.w.cyng == d.dys /\ Y.yrepr d.dym d.dys /\ x.w.croots == d.drt /\ x.w.crem == [] /\
+                   x.w.cyng == d.dys /\ Y.yrepr d.dym d.dys /\ x.w.croots == d.drt /\ x.w.crem == [] /\ x.ms == None /\
                    pa.T.inv x.ph x.w.cmaj (stx x) /\ PWP.kinds_ok (stx x).ps d.dj /\ M.well_formed (mx x))
   = holds_def x d
 

@@ -218,7 +218,7 @@ let reaches_self (g: SB.heap) (a: hp_addr) : Lemma (Wk.reaches g a (U64.v a)) = 
 fn handoverf (heap: heap_t) (fp_ref: R.ref U64.t) (phase: R.ref AI.phase_state)
   (#sty: erased style) (#es: erased (list event))
   requires crepf heap fp_ref phase sty es **
-           pure (T.Marking? (CF.xc es).ph /\ T.mark_done (mj (CF.xc es)))
+           pure (T.Marking? (CF.xc es).ph /\ T.mark_done (mj (CF.xc es)) /\ None? (scan_of (CF.xc es)))
   ensures crepf heap fp_ref phase sty (L.append es [EHandover])
 {
   unfold crepf;

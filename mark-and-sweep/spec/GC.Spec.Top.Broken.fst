@@ -16,6 +16,8 @@
 ///   |                                                      | snapshot-based reading accepts it  |
 ///   | minor collection skipping a remembered slot          | `minor_ok`: exactly the live young |
 ///   | mark not greying old objects held by young ones      | `mark_ok`: outside_refs greyed     |
+///   | mark scanning a field without darkening its target   | `mark_ok`: a move is the model's   |
+///   | (`bad_lazy`)                                         |                                    |
 ///   | minor collection always out of room (`bad_oor`)      | `minor_ok`: OutOfRoom justified    |
 ///   | barrier not remembering a Fill's young pointers      | `barrier_ok`                       |
 ///   | representation relating every heap to the empty heap | `faithful` (nothing missing)       |
@@ -441,7 +443,7 @@ let w_garbage : world =
 
 let x_garbage : config tc =
   { w = cw_of w_garbage; ph = Marking; ast = st_at 4; hs = w_garbage.maj;
-    snap = (fun o -> o == 0 \/ o == 2); allocd = (fun _ -> False); stopped = false }
+    snap = (fun o -> o == 0 \/ o == 2); allocd = (fun _ -> False); stopped = false; ms = (None <: scan) }
 
 let garbage_unreachable () : Lemma (~(reachable w_garbage 2))
   = let s (o: nat) : prop = o == 0 in
@@ -631,6 +633,31 @@ let bad_roots_only_fails () : Lemma (~(mark_start_at toy_rep bad_roots_only (cw_
     assert (~(dark (col_of (bad_roots_only_start w_young_held) 0)))
 
 let bad_roots_only_rejected () : Lemma (~(mark_ok toy_rep bad_roots_only)) = bad_roots_only_fails ()
+
+/// ---------------------------------------------------------------------------
+/// 7b. A mark whose grey move scans a field without darkening its target
+/// ---------------------------------------------------------------------------
+
+let bad_lazy_move (h: mheap) (sc: scan) (mv: move) : mheap & scan =
+  match mv with
+  | MGrey -> (h, move_scan sc mv)
+  | _ -> tmmove h sc mv
+
+let bad_lazy : mark mheap mheap = { tmark with mmove = bad_lazy_move }
+
+/// A at 0, grey, being scanned, its field pointing to the white B at 2.
+let body_ab : nat -> value = fun (x: nat) -> if x = 1 then VPtr (Major 2) else VInt 0
+let h_lazy : mheap = heap2 1 Grey 1 White body_ab
+
+let bad_lazy_fails () : Lemma (~(mark_move_at toy_rep bad_lazy h_lazy (Some (0, 0)) MGrey))
+  = heap2_wf 1 Grey 1 White body_ab;
+    toy_rep_id ();
+    forall_repr_id toy_rep h_lazy (mark_move_m toy_rep bad_lazy h_lazy (Some (0, 0)) MGrey);
+    assert_norm (move_ok h_lazy (Some (0, 0)) MGrey == true);
+    assert_norm (col_of (darken_field h_lazy 0 0) 2 == Grey /\ col_of h_lazy 2 == White);
+    id_repr toy_rep (darken_field h_lazy 0 0) h_lazy
+
+let bad_lazy_rejected () : Lemma (~(mark_ok toy_rep bad_lazy)) = bad_lazy_fails ()
 
 /// ---------------------------------------------------------------------------
 /// 8. A minor collection that always reports OutOfRoom

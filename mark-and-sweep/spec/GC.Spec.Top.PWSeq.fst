@@ -60,9 +60,9 @@ let ok (x: config pc) (e: event) : prop = RA.conds pc sq x e /\ TR.alloc_succeed
 
 let x8 () : GTot (config pc) = step pc (x7 ()) EStart
 let x9 () : GTot (config pc) = step pc (x8 ()) EMinor
-let x10 () : GTot (config pc) = step pc (x9 ()) ESlice
-let x11 () : GTot (config pc) = step pc (x10 ()) ESlice
-let x12 () : GTot (config pc) = step pc (x11 ()) ESlice
+let x10 () : GTot (config pc) = step pc (x9 ()) (PWK.esl (x9 ()))
+let x11 () : GTot (config pc) = step pc (x10 ()) (PWK.esl (x10 ()))
+let x12 () : GTot (config pc) = step pc (x11 ()) (PWK.esl (x11 ()))
 let x13 () : GTot (config pc) = step pc (x12 ()) EHandover
 let x14 () : GTot (config pc) = step pc (x13 ()) EMinor
 
@@ -80,17 +80,17 @@ let c9 () : Lemma (requires pw_room /\ cok)
     minor_empty sq (x8 ()) DM M.Grey M.White M.White true [vA ()] 4
 
 let c10 () : Lemma (requires pw_room /\ cok)
-  (ensures holds (x10 ()) (ddv DM M.Black M.Grey M.White true [vA ()] 6) /\ ok (x9 ()) ESlice)
+  (ensures holds (x10 ()) (ddv DM M.Black M.Grey M.White true [vA ()] 6) /\ ok (x9 ()) (PWK.esl (x9 ())))
   = c9 (); distinct ();
     slice_dd sq (x9 ()) M.Grey M.White M.White true [vA ()] 6
 
 let c11 () : Lemma (requires pw_room /\ cok)
-  (ensures holds (x11 ()) (ddv DM M.Black M.Black M.Grey true [vA ()] 6) /\ ok (x10 ()) ESlice)
+  (ensures holds (x11 ()) (ddv DM M.Black M.Black M.Grey true [vA ()] 6) /\ ok (x10 ()) (PWK.esl (x10 ())))
   = c10 (); distinct ();
     slice_dd sq (x10 ()) M.Black M.Grey M.White true [vA ()] 6
 
 let c12 () : Lemma (requires pw_room /\ cok)
-  (ensures holds (x12 ()) (ddv DM M.Black M.Black M.Black true [vA ()] 6) /\ ok (x11 ()) ESlice)
+  (ensures holds (x12 ()) (ddv DM M.Black M.Black M.Black true [vA ()] 6) /\ ok (x11 ()) (PWK.esl (x11 ())))
   = c11 (); distinct ();
     slice_dd sq (x11 ()) M.Black M.Black M.Grey true [vA ()] 6
 
@@ -304,7 +304,7 @@ let c21 () : Lemma (requires pw_room /\ cok)
 /// ---------------------------------------------------------------------------
 
 let pre14 () : GTot (list event) =
-  [e0; e1; e2 (); e3; e4 (); e5 (); e6 (); EStart; EMinor; ESlice; ESlice; ESlice; EHandover; EMinor]
+  [e0; e1; e2 (); e3; e4 (); e5 (); e6 (); EStart; EMinor; PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover; EMinor]
 
 let post () : GTot (list event) = [EEnd; e16 (); e17 (); e18; e19 (); EMinor]
 
@@ -328,18 +328,18 @@ let pre_ok () : Lemma (requires pw_room /\ cok)
     tail_nil sq (x14 ()); nf_nil (x14 ());
     tl_cons (x13 ()) EMinor [];
     tl_cons (x12 ()) EHandover [EMinor];
-    tl_cons (x11 ()) ESlice [EHandover; EMinor];
-    tl_cons (x10 ()) ESlice [ESlice; EHandover; EMinor];
-    tl_cons (x9 ()) ESlice [ESlice; ESlice; EHandover; EMinor];
-    tl_cons (x8 ()) EMinor [ESlice; ESlice; ESlice; EHandover; EMinor];
-    tl_cons (x7 ()) EStart [EMinor; ESlice; ESlice; ESlice; EHandover; EMinor];
-    tl_cons (x6 ()) (e6 ()) [EStart; EMinor; ESlice; ESlice; ESlice; EHandover; EMinor];
-    tl_cons (x5 ()) (e5 ()) [e6 (); EStart; EMinor; ESlice; ESlice; ESlice; EHandover; EMinor];
-    tl_cons (x4 ()) (e4 ()) [e5 (); e6 (); EStart; EMinor; ESlice; ESlice; ESlice; EHandover; EMinor];
-    tl_cons (x3 ()) e3 [e4 (); e5 (); e6 (); EStart; EMinor; ESlice; ESlice; ESlice; EHandover; EMinor];
-    tl_cons (x2 ()) (e2 ()) [e3; e4 (); e5 (); e6 (); EStart; EMinor; ESlice; ESlice; ESlice; EHandover; EMinor];
-    tl_cons (x1 ()) e1 [e2 (); e3; e4 (); e5 (); e6 (); EStart; EMinor; ESlice; ESlice; ESlice; EHandover; EMinor];
-    tl_cons (x0 ()) e0 [e1; e2 (); e3; e4 (); e5 (); e6 (); EStart; EMinor; ESlice; ESlice; ESlice; EHandover; EMinor]
+    tl_cons (x11 ()) (PWK.esl (x11 ())) [EHandover; EMinor];
+    tl_cons (x10 ()) (PWK.esl (x10 ())) [PWK.esl (x11 ()); EHandover; EMinor];
+    tl_cons (x9 ()) (PWK.esl (x9 ())) [PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover; EMinor];
+    tl_cons (x8 ()) EMinor [PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover; EMinor];
+    tl_cons (x7 ()) EStart [EMinor; PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover; EMinor];
+    tl_cons (x6 ()) (e6 ()) [EStart; EMinor; PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover; EMinor];
+    tl_cons (x5 ()) (e5 ()) [e6 (); EStart; EMinor; PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover; EMinor];
+    tl_cons (x4 ()) (e4 ()) [e5 (); e6 (); EStart; EMinor; PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover; EMinor];
+    tl_cons (x3 ()) e3 [e4 (); e5 (); e6 (); EStart; EMinor; PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover; EMinor];
+    tl_cons (x2 ()) (e2 ()) [e3; e4 (); e5 (); e6 (); EStart; EMinor; PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover; EMinor];
+    tl_cons (x1 ()) e1 [e2 (); e3; e4 (); e5 (); e6 (); EStart; EMinor; PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover; EMinor];
+    tl_cons (x0 ()) e0 [e1; e2 (); e3; e4 (); e5 (); e6 (); EStart; EMinor; PWK.esl (x9 ()); PWK.esl (x10 ()); PWK.esl (x11 ()); EHandover; EMinor]
 
 let post_ok () : Lemma (requires pw_room /\ cok)
   (ensures RA.tail_ok pc sq (x15 ()) (post ()) /\ nf_tail (x15 ()) (post ()))

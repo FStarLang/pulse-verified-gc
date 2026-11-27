@@ -10,16 +10,18 @@
 ///   * `bstart`: root darkening (akhil's `GC.Gen.MarkPhase.Start.darkened`,
 ///     4.14's `caml_darken_all_roots_start`) of the major pointers in the
 ///     roots and in the nursery's fields that the model resolves;
-///   * `bslice`: one object at a time, at the lowest grey block: akhil's
-///     moves of `GC.Spec.MarkPhase.Slice` -- start to scan it, scan each of
-///     its fields (`S.scan_field`, `MM.darken` of the field), blacken it.
-///     `bslice_moves`: a slice is `S.mark_steps` from no partly scanned
-///     object back to none.
+///   * `bmove`: akhil's moves of `GC.Spec.MarkPhase.Slice` one at a time --
+///     start to scan a block, scan its next field (the target darkened),
+///     blacken it; the state is the scan.
+///   * `bslice` (kept for the account of akhil's slice): one object, at the
+///     lowest grey block, scanned whole; `bslice_moves`: it is
+///     `S.mark_steps` from no partly scanned object back to none.
 ///
-/// Proved: `byte_mark_ok : mark_ok byte_rep bmark`.  The canonical reading
-/// of a slice is the toy slice at the same grey block, and that of the
-/// start is the toy start (`GC.Spec.Top.ToyMark`), whose model proofs give
-/// the contract.
+/// Proved: `byte_mark_ok : mark_ok byte_rep bmark`: each move, read as the
+/// model, is the model's move (`move_grey`, `move_black`); the start's
+/// canonical reading is the toy start (`GC.Spec.Top.ToyMark`), whose model
+/// proofs give the contract.  `bslice_ok`: the whole-object slice is the
+/// toy slice at the same grey block.
 
 module GC.Spec.Top.ByteMark
 
@@ -46,6 +48,7 @@ module MM = GC.Spec.MarkPhase.Mutator
 module HG = GC.Spec.HeapGraph
 module MStart = GC.Gen.MarkPhase.Start
 module MB = GC.Impl.MarkBounded
+module MV = GC.Spec.Top.MarkMoves
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
@@ -407,7 +410,22 @@ let start_ws (w: M.world) : GTot (Seq.seq U64.t) =
 let bstart (cw: T.cworld heap GC.Gen.MinorHeap.minor_state) : GTot heap =
   MStart.darkened cw.T.cmaj (start_ws (cview cw))
 
-let bmark : T.mark heap GC.Gen.MinorHeap.minor_state = { T.mstart = bstart; T.mslice = bslice }
+/// ---------------------------------------------------------------------------
+/// The moves
+/// ---------------------------------------------------------------------------
+
+/// akhil's moves on the byte heap: starting a block changes nothing; a grey
+/// move darkens the target the model resolves the field to (the barrier's
+/// `BB.darken_old`; akhil's `S.scan_field` when the field resolves,
+/// `darken_old_model`); a black move blackens the block.
+let bmove (g: heap) (sc: T.scan) (mv: T.move) : GTot (heap & T.scan) =
+  match mv with
+  | T.MBegin _ -> (g, T.move_scan sc mv)
+  | T.MGrey -> (match sc with Some (o, i) -> (BB.darken_old g o i, T.move_scan sc mv) | None -> (g, sc))
+  | T.MBlack o -> ((if pos o + 8 < heap_size then makeBlack (obj_of o) g else g), T.move_scan sc mv)
+
+let bmark : T.mark heap GC.Gen.MinorHeap.minor_state = {
+  T.mstate = T.scan; T.mscan = (fun sc -> sc); T.mnone = None; T.mstart = bstart; T.mmove = bmove }
 
 /// ---------------------------------------------------------------------------
 /// The words, read as the model
@@ -809,10 +827,116 @@ let bstart_ok (cw: T.cworld heap GC.Gen.MinorHeap.minor_state) : Lemma (T.mark_s
         FStar.Classical.move_requires pre () in
     FStar.Classical.forall_intro (FStar.Classical.move_requires one)
 
+/// The model's grey move is the barrier's darkening.
+let tdark_field (h: M.mheap) (o i: nat) : Lemma (BB.tdark true h o i == T.darken_field h o i) = ()
+
+let move_grey (m: M.mheap) (g: heap) (o i: nat)
+  : Lemma (requires brepr m g /\ M.is_block m o)
+          (ensures brepr (T.darken_field m o i) (BB.darken_old g o i))
+  = BB.darken_cabs true g o i;
+    BB.tdark_heq true m (cabs g) o i;
+    tdark_field m o i;
+    tdark_field (cabs g) o i;
+    R.heq_sym (cabs (BB.darken_old g o i)) (BB.tdark true (cabs g) o i);
+    R.heq_trans (T.darken_field m o i) (T.darken_field (cabs g) o i) (cabs (BB.darken_old g o i))
+
+let move_black (m: M.mheap) (g: heap) (o: nat)
+  : Lemma (requires brepr m g /\ M.is_block m o)
+          (ensures pos o + 8 < heap_size /\ brepr (M.set_col m o M.Black) (makeBlack (obj_of o) g))
+  = noscan_iff g o;
+    makeBlack_eq (obj_of o) g;
+    cabs_recolour g o GC.Lib.Header.Black;
+    set_col_heq m (cabs g) o M.Black;
+    R.heq_sym (cabs (makeBlack (obj_of o) g)) (M.set_col (cabs g) o M.Black);
+    R.heq_trans (M.set_col m o M.Black) (M.set_col (cabs g) o M.Black) (cabs (makeBlack (obj_of o) g))
+
+let bmove_m (g: heap) (sc: T.scan) (mv: T.move) (m: M.mheap)
+  : Lemma (requires brepr m g) (ensures T.mark_move_m byte_rep bmark g sc mv m)
+  = match mv with
+    | T.MBegin _ -> ()
+    | T.MGrey -> (match sc with Some (o, i) -> if M.is_block m o then move_grey m g o i | None -> ())
+    | T.MBlack o -> if M.is_block m o then move_black m g o
+
+let bmove_ok (g: heap) (sc: bmark.T.mstate) (mv: T.move) : Lemma (T.mark_move_at byte_rep bmark g sc mv)
+  = FStar.Classical.forall_intro (FStar.Classical.move_requires (bmove_m g sc mv))
+
+/// Along a list of moves the model allows, the byte heap follows the model.
+#push-options "--fuel 1"
+let rec bmoves_repr (g: heap) (m: M.mheap) (sc: T.scan) (mvs: list T.move)
+  : Lemma (requires brepr m g /\ M.well_formed m /\ T.moves_ok m sc mvs)
+          (ensures brepr (fst (MV.mfold m sc mvs)) (fst (T.mmoves bmark g sc mvs)) /\
+                   snd (T.mmoves bmark g sc mvs) == snd (MV.mfold m sc mvs))
+          (decreases mvs)
+  = match mvs with
+    | [] -> ()
+    | mv :: tl ->
+      bmove_m g sc mv m;
+      MV.move_wf m sc mv;
+      let (g1, sc1) = bmove g sc mv in
+      bmoves_repr g1 (T.move_heap m sc mv) sc1 tl
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// A whole object as moves
+/// ---------------------------------------------------------------------------
+
+let rec greys (n: nat) : list T.move = if n = 0 then [] else T.MGrey :: greys (n - 1)
+
+/// Scanning the block at `t` whole: start it, scan each of its `wz` fields,
+/// blacken it; a block with no field to scan is only blackened.
+let obj_moves (t wz: nat) (scn: bool) : list T.move =
+  if scn && wz > 0 then T.MBegin t :: L.append (greys wz) [T.MBlack t] else [T.MBlack t]
+
+let obj_mv (m: M.mheap) (t: nat) : list T.move = obj_moves t (M.wz_of m t) (M.scannable (M.tag_of m t))
+
+#push-options "--fuel 2"
+let rec greys_fold (h: M.mheap) (o j n: nat)
+  : Lemma (requires M.is_block h o /\ M.col_of h o == M.Grey /\ M.scannable (M.tag_of h o) /\ j <= n /\
+                    n == M.wz_of h o)
+          (ensures T.moves_ok h (Some (o, j)) (L.append (greys (n - j)) [T.MBlack o]) /\
+                   MV.mfold h (Some (o, j)) (L.append (greys (n - j)) [T.MBlack o]) ==
+                     (M.set_col (mscan h o j n) o M.Black, None))
+          (decreases (n - j))
+  = if j = n then ()
+    else begin
+      tdark_cols h o j;
+      tdark_field h o j;
+      greys_fold (BB.tdark true h o j) o (j + 1) n
+    end
+#pop-options
+
+/// **The object's moves are the toy slice there**, and the model allows them.
+#push-options "--fuel 2"
+let obj_moves_model (h: M.mheap) (t: nat)
+  : Lemma (requires M.is_block h t /\ M.col_of h t == M.Grey)
+          (ensures T.moves_ok h None (obj_mv h t) /\
+                   R.heq (fst (MV.mfold h None (obj_mv h t))) (TM.tmslice_with h t) /\
+                   snd (MV.mfold h None (obj_mv h t)) == None)
+  = let wz = M.wz_of h t in
+    if M.scannable (M.tag_of h t) then begin
+      tmslice_scan h t;
+      if wz > 0 then greys_fold h t 0 wz
+    end
+    else tmslice_noscan h t
+#pop-options
+
+/// **A whole-object slice, on the byte heap**: the toy slice, nothing left
+/// being scanned.
+let obj_moves_bytes (g: heap) (m: M.mheap) (t: nat)
+  : Lemma (requires brepr m g /\ M.well_formed m /\ M.is_block m t /\ M.col_of m t == M.Grey)
+          (ensures T.moves_ok m None (obj_mv m t) /\
+                   brepr (TM.tmslice_with m t) (fst (T.mmoves bmark g None (obj_mv m t))) /\
+                   snd (T.mmoves bmark g None (obj_mv m t)) == None)
+  = obj_moves_model m t;
+    bmoves_repr g m None (obj_mv m t);
+    let m1 = fst (MV.mfold m None (obj_mv m t)) in
+    R.heq_sym m1 (TM.tmslice_with m t);
+    R.heq_trans (TM.tmslice_with m t) m1 (cabs (fst (T.mmoves bmark g None (obj_mv m t))))
+
 /// **The byte mark meets the mark contract.**
 let byte_mark_ok () : Lemma (T.mark_ok byte_rep bmark)
   = FStar.Classical.forall_intro bstart_ok;
-    FStar.Classical.forall_intro_3 bslice_ok
+    FStar.Classical.forall_intro_3 bmove_ok
 
 /// ---------------------------------------------------------------------------
 /// A slice is akhil's moves

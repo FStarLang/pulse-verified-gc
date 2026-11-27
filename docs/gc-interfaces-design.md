@@ -4191,3 +4191,73 @@ instances and witness runs (checkpoint 3: `ByteMark`, `ToyMark`,
 Checked (no `--retry`, seeds 0, 1, 2): every module of `T1`, `T2` and
 `gc_correct` (`Correct`) in dependency order, from `Iface` on.  Not yet
 rechecked: the instances and witness runs (checkpoint 3).
+
+**Checkpoint 3 (instances and witness runs)**, built 2026-11-27,
+uncommitted.  No specification change.
+
+- **ToyMark**: the state is the scan and a move is the model's move
+  (`tmmove`); `toy_mark_ok` is then immediate.  The whole-object slice
+  `tmslice` and its model proofs are kept (the byte mark's account of
+  akhil's slice uses them).
+- **ByteMark**: akhil's moves on the byte heap (`bmove`): `MBegin` changes
+  nothing; `MGrey` darkens the target the model resolves the field to
+  (the barrier's `BB.darken_old`, which is akhil's `S.scan_field` when the
+  field resolves, `darken_old_model`); `MBlack` is `makeBlack`.
+  `byte_mark_ok` from `move_grey`/`move_black` (each move read as the model
+  is the model's move).  For the witness runs: a whole object as moves
+  (`obj_moves`: begin, one grey move per field, black; a block with no
+  field to scan only black) is the toy slice there (`obj_moves_model`),
+  and along any list the model allows the byte heap follows the model
+  (`bmoves_repr`), so `obj_moves_bytes`.  Note for step 4 (L8): the
+  instance's grey move is guarded by the model's resolution, as the
+  barrier's darkening already is.  akhil's `scan_field` agrees with it
+  when the field resolves (`darken_old_model`); what it does with a field
+  the model does not resolve is not established here.  In runs every
+  scanned field resolves (the live set is closed), but the contract
+  quantifies over every heap, so linking the Pulse mark may need either
+  the same guard or resolution as a precondition of the move contract (a
+  specification change, to be asked).
+- **MarkMoves** additions: `move_wf`, and `moves_ok_heq` (heaps with the
+  same headers and words allow the same moves).
+- **Broken**: a new rejected component, `bad_lazy`: a mark whose grey move
+  scans a field without darkening its target; `mark_ok` rejects it
+  (`bad_lazy_rejected`).  `x_garbage` gets its scan.
+- **Vacuity**: the runs' slices are explicit moves (`scan_a = [MBegin 0;
+  MGrey; MBlack 0]`, `scan_b`); the event checks compute `moves_ok`.
+- **Witness runs** (first-fit `FFW*`, pages `PW*`): a description now also
+  says nothing is being scanned (`x.ms == None`); each slice is one whole
+  object as moves: first-fit's `sl_B`, `sl_A`, `sl_K` (`FFWMark`, with
+  `mv_B`/`mv_A`/`mv_K` tying them to the model), pages' `esl x` (the moves
+  of the lowest grey block at `x`, `PWMark.slm`), so each run's event list
+  names its slices by the configuration they fire at.
+- **Fixes during the check**: `FFWRun.ok_slice` goes through a
+  small-context lemma `obj_moves_ok` (an object's moves are non-empty and
+  allowed on any heap with the same headers and words); `PWMark.mk_intro`
+  requires `x'.ms == None` (its two callers have it from `start_facts` and
+  `slice_facts`).
+
+- **Fixes after the pause** (no statement changed, rlimits at most 40):
+  `PWIncB.ptr_D` (D's field is a pointer field, a small-context lemma
+  for the read in `c24`); `PWSeqF`, `PWIncF`, `PWNamesS`: the positions of
+  an event list are proved over variables (`idx14`, `idx6`, `idx7v`,
+  `mid7`, `mid7'`), so a slice's event is not unfolded, and `midl` is now
+  `midl ()` (its slices are ghost); `PWIncF.ph_17_21` (young allocations,
+  minor collections and root changes keep the phase); `CodeMinor`:
+  `fld_aligned` (a field's address is word-aligned), for a timeout at
+  seed 0 only.
+- **Pulse wrappers**: `handover_top` (`GC.Impl.Pages.Top`), `handoverf`
+  (`GC.Impl.FFTop`) and `handover2` (`GC.Impl.Pages.TopMinor`) also
+  require `None? (scan_of _)` next to `mark_done`: a hand-over now needs
+  nothing being scanned (checkpoint 1's `enabled`).  Like `mark_done`, it
+  is a fact of the mark, to be discharged when the Pulse mark is linked
+  (step 4).
+
+**Checked 2026-11-27** (resumed after a pause on `sheera/gc-plug-wip`):
+the 154-module closure (`topo.py` over Vacuity, Broken, PagesFree,
+ByteRep, PagesFrame, PagesStepOk, PagesFits, PagesComps, FFComps, FFWInc,
+FollowWitness, PWHyps, CodePages, CodeMinor, CodeFF, CodeRun, T1, T2,
+Correct) and the Pulse wrappers `GC.Impl.Pages.Top`,
+`GC.Impl.Pages.TopMinor`, `GC.Impl.FFTop` are clean (0 errors, 0
+warnings) at Z3 seeds 0, 1 and 2 without `--retry`; no admits or assumes,
+rlimits 20 or 40.  Open for step 4: the `scan_field` guard noted under
+ByteMark above.

@@ -18,6 +18,7 @@ open GC.Spec.Top.PWList
 open GC.Spec.Top.TrNames
 open GC.Spec.Top.PWNames
 module M = GC.Spec.Top.Heap
+module PWK = GC.Spec.Top.PWMark
 module L = FStar.List.Tot
 module RA = GC.Spec.Top.RunApp
 module RF = GC.Spec.Top.RunFacts
@@ -102,7 +103,7 @@ let ev7 (i: nat) : Lemma (requires i < 7 /\ L.length (pre7 ()) == 7)
   (ensures i < L.length (es_seq ()) /\ ev (es_seq ()) i == L.index (pre7 ()) i)
   = es_is (); len_pre (); pre_split ();
     ev_pre i;
-    RA.index_app_lt (pre7 ()) midl i
+    RA.index_app_lt (pre7 ()) (midl ()) i
 
 let succ (i: nat) : Lemma (requires i < 7 /\ L.length (pre7 ()) == 7)
   (ensures atn (i + 1) == step pc (atn i) (L.index (pre7 ()) i))
@@ -137,8 +138,14 @@ let at_post2 () : Lemma (requires pw_room /\ cok)
     at_q pc W.msize W.ywords (pre14 ()) (ksw ()) (post ()) 4
 
 #push-options "--fuel 8"
-let pre_mid' (j: nat) : Lemma (requires j < 7) (ensures j < L.length midl /\ not (is_mutator_event (L.index midl j)))
+let mid7' (b c e: event) (j: nat)
+  : Lemma (requires ESlice? b /\ ESlice? c /\ ESlice? e /\ j < 7)
+          (ensures (let l = [EStart; EMinor; b; c; e; EHandover; EMinor] in
+                    j < L.length l /\ not (is_mutator_event (L.index l j))))
   = ()
+
+let pre_mid' (j: nat) : Lemma (requires j < 7) (ensures j < L.length (midl ()) /\ not (is_mutator_event (L.index (midl ()) j)))
+  = mid7' (PWK.esl (x9 ())) (PWK.esl (x10 ())) (PWK.esl (x11 ())) j
 #pop-options
 
 let cases7 (i: nat) : Lemma (requires i < 7) (ensures i == 0 \/ i == 1 \/ i == 2 \/ i == 3 \/ i == 4 \/ i == 5 \/ i == 6)
@@ -185,7 +192,7 @@ let named_at (i: nat) : Lemma (requires pw_room /\ cok /\ i < L.length (es_seq (
     if i < 7 then named_pre i
     else if i < 14 then begin
       ev_pre i;
-      RA.index_app_ge (pre7 ()) midl (i - 7);
+      RA.index_app_ge (pre7 ()) (midl ()) (i - 7);
       pre_mid' (i - 7)
     end
     else if i < 14 + ksw () then ev_r (pre14 ()) (ksw ()) (post ()) (i - 14)

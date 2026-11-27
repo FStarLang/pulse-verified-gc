@@ -130,10 +130,14 @@ let prefix : list event = [
   ERoots [VPtr (Major 0)]                 (* 6: only A is a root *)
 ]
 
+/// A whole block scanned: start it, scan its one field, blacken it.
+let scan_a : list move = [MBegin 0; MGrey; MBlack 0]
+let scan_b : list move = [MBegin 2; MGrey; MBlack 2]
+
 let es_seq : list event = L.append prefix [
   EStart;                                 (* 7: snapshot {A, B}; C unreachable *)
-  ESlice;                                 (* 8: scan A *)
-  ESlice;                                 (* 9: scan B *)
+  ESlice scan_a;                          (* 8: scan A *)
+  ESlice scan_b;                          (* 9: scan B *)
   EHandover;                              (* 10: progress (0, 6) *)
   ESweep;                                 (* 11: A black -> white *)
   ESweep;                                 (* 12: B black -> white *)
@@ -147,8 +151,8 @@ let es_inc : list event = L.append prefix [
   EStart;                                 (* 7 *)
   EAlloc 1 0 [VPtr (Major 2)];            (* 8: D at 6, black, D.0 = B *)
   EWrite (Major 0) 0 (VInt 5);            (* 9: A.0 := 5, the barrier greys B *)
-  ESlice;                                 (* 10: scan A *)
-  ESlice;                                 (* 11: scan B *)
+  ESlice scan_a;                          (* 10: scan A *)
+  ESlice scan_b;                          (* 11: scan B *)
   EHandover;                              (* 12: progress (0, 8) *)
   EAlloc 1 0 [VPtr (Major 6)];            (* 13: E at 8, white, E.0 = D *)
   EWrite (Major 6) 0 (VPtr (Major 0));    (* 14: D.0 := A *)
@@ -182,8 +186,8 @@ let simple_b (sty: style) (x: config tc) (e: event) : GTot bool =
    | EAlloc sz tag vs -> tag <> infix_tag && L.length vs = sz && L.for_all VInt? vs &&
                          (not (Sequential? sty) || Idle? x.ph)
    | EStart -> Idle? x.ph
-   | ESlice -> Marking? x.ph && not (no_grey_b (wo x).maj)
-   | EHandover -> Marking? x.ph && no_grey_b (wo x).maj
+   | ESlice mvs -> Marking? x.ph && Cons? mvs && moves_ok (wo x).maj (scan_of x) mvs
+   | EHandover -> Marking? x.ph && no_grey_b (wo x).maj && None? (scan_of x)
    | ESweep -> Sweeping? x.ph && not (tsweep.done (Sweeping?._0 x.ph))
    | EEnd -> Sweeping? x.ph && tsweep.done (Sweeping?._0 x.ph)
    | EMinor -> true
@@ -203,11 +207,6 @@ let simple_ok (sty: style) (x: config tc) (e: event)
         = if i < L.length vs then for_all_vint vs i in
       FStar.Classical.forall_intro f;
       tc_storable vs; mutator_of x e
-    | ESlice ->
-      exists_below_iff (wo x).maj.size (grey_at (wo x).maj);
-      let g = FStar.IndefiniteDescription.indefinite_description_ghost nat
-                (fun o -> o < (wo x).maj.size /\ is_block (wo x).maj o /\ col_of (wo x).maj o == Grey) in
-      assert (~(no_grey (wo x).maj))
     | EHandover -> no_grey_of_b (wo x).maj
     | _ -> ()
 
@@ -216,12 +215,11 @@ let simple_step (es: list event) (sty: style) (i: nat{i < L.length es})
           (ensures step_ok es sty i)
   = simple_ok sty (at tc n_heap n_young es i) (ev es i)
 
-/// ESlice: something is grey.
-let slice_enabled (x: config tc)
-  : Lemma (requires Marking? x.ph /\ x.stopped == false /\ no_grey_b (wo x).maj == false)
-          (ensures enabled tc x ESlice)
-  = tc_vw x;
-    exists_below_iff (wo x).maj.size (grey_at (wo x).maj)
+/// ESlice: the model allows the moves.
+let slice_enabled (x: config tc) (mvs: list move)
+  : Lemma (requires Marking? x.ph /\ x.stopped == false /\ Cons? mvs /\ moves_ok (wo x).maj (scan_of x) mvs == true)
+          (ensures enabled tc x (ESlice mvs))
+  = tc_vw x
 
 #push-options "--fuel 2"
 let single_fill (w: world) (v: value)

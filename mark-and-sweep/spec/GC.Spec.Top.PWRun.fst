@@ -117,12 +117,19 @@ let enabled_start (x: config pc) (d: dsc)
   = holds_elim x d
 
 let enabled_slice (x: config pc) (d: dsc)
-  : Lemma (requires holds x d /\ d.dk == DM /\ ~(T.no_grey (mx x))) (ensures enabled pc x ESlice)
-  = holds_elim x d; mark_done_wd x d
+  : Lemma (requires holds x d /\ d.dk == DM /\ ~(T.no_grey (mx x)))
+          (ensures enabled pc x (ESlice (GC.Spec.Top.PWMark.slm x)))
+  = holds_elim x d;
+    mj_wd x d;
+    GC.Spec.Top.ByteMark.some_grey (mx x) x.w.cmaj;
+    let t = GC.Spec.Top.PWMark.fg x in
+    GC.Spec.Top.ByteMark.obj_moves_model (mx x) t;
+    GC.Spec.Top.MarkMoves.moves_ok_heq (mj x) (mx x) None (GC.Spec.Top.PWMark.slm x);
+    assert_norm (Cons? (GC.Spec.Top.ByteMark.obj_moves t (M.wz_of (mx x) t) (M.scannable (M.tag_of (mx x) t))))
 
 let enabled_hand (x: config pc) (d: dsc)
   : Lemma (requires holds x d /\ d.dk == DM /\ T.no_grey (mx x)) (ensures enabled pc x EHandover)
-  = holds_elim x d; mark_done_wd x d
+  = holds_elim x d; mark_done_wd x d; assert (scan_of x == None)
 
 let enabled_yalloc (x: config pc) (d: dsc) (sz: M.size_t) (tag: M.tag_t) (vs: list M.value) (o: nat) (ms': GC.Gen.MinorHeap.minor_state)
   : Lemma (requires holds x d /\ GC.Spec.Top.Young.yalloc d.dys sz tag vs == Some (o, ms'))

@@ -6,9 +6,9 @@
 /// byte mark computed on the model:
 ///   - `step_start`: the start greys the white blocks the roots and the
 ///     nursery point to (`ByteMark.bstart_cabs`, the toy start);
-///   - `step_slice`: a slice scans the grey block `fg x` the byte mark finds
-///     (`ByteMark.scan_obj_cabs`, the toy slice): it turns black, its white
-///     targets grey.
+///   - `step_slice`: a slice scans the lowest grey block `fg x` whole, as
+///     moves (`slm x`, `ByteMark.obj_moves_bytes`, the toy slice): it turns
+///     black, its white targets grey.
 /// Both are changes the allocator's invariant does not read
 /// (`inv_frame_at`): colours of blocks in use, while marking, darkened.
 
@@ -96,7 +96,7 @@ let recol_after (x x': config pc) (d: dsc) (m': M.mheap)
 
 let mk_intro (x x': config pc) (d d': dsc)
   : Lemma (requires holds x d /\ x'.stopped == x.stopped /\ x'.w.cyng == x.w.cyng /\ x'.w.croots == x.w.croots /\
-                    x'.w.crem == x.w.crem /\ d'.dys == d.dys /\ d'.dym == d.dym /\ d'.drt == d.drt /\ d'.dj == d.dj /\
+                    x'.w.crem == x.w.crem /\ x'.ms == None /\ d'.dys == d.dys /\ d'.dym == d.dym /\ d'.drt == d.drt /\ d'.dj == d.dj /\
                     kph x' d'.dk /\ stx x' == stx x /\
                     pa.T.inv x'.ph x'.w.cmaj (stx x') /\ M.well_formed (mx x') /\
                     (forall (y: nat). Some? (d'.db y) ==> bk x' d' y (Some?.v (d'.db y))) /\
@@ -110,6 +110,7 @@ let start_facts (x: config pc) (d: dsc)
           (ensures (let x' = step pc x EStart in
                     let m' = TM.tmstart (wd x d) in
                     R.heq (mx x') m' /\ M.colours_only (mx x) m' /\ x'.ph == T.Marking /\ stx x' == stx x /\
+                    x'.ms == None /\
                     pa.T.inv T.Marking x.w.cmaj (stx x) /\ T.inv_frame_at byte_rep pa T.Marking x.w.cmaj (stx x) x'.w.cmaj /\
                     (forall (y: nat). M.col_of m' y =!= M.col_of (mx x) y ==> iu x y == true /\ M.dark (M.col_of m' y)) /\
                     (forall (y: nat). (M.col_of m' y == M.Blue <==> M.col_of (mx x) y == M.Blue))))
@@ -177,6 +178,12 @@ let step_start (x: config pc) (d: dsc)
 let fg (x: config pc) : GTot nat =
   match TM.find_grey (mx x) msize with Some t -> t | None -> 0
 
+/// Its moves: the block scanned whole (`ByteMark.obj_mv`).
+let slm (x: config pc) : GTot (list T.move) = BM.obj_mv (mx x) (fg x)
+
+/// The slice event at `x`.
+let esl (x: config pc) : GTot event = ESlice (slm x)
+
 let gslice (x: config pc) (t: nat) (y: nat) (b: bd) : GTot bd =
   if y = t then { b with bc = M.Black }
   else if TM.edge_b (mx x) t y && b.bc = M.White then { b with bc = M.Grey }
@@ -208,34 +215,36 @@ let slice_cols (m: M.mheap) (t: nat)
 
 let slice_facts (x: config pc) (d: dsc)
   : Lemma (requires slpre x d)
-          (ensures (let x' = step pc x ESlice in
+          (ensures (let x' = step pc x (ESlice (slm x)) in
                     let m' = TM.tmslice_with (mx x) (fg x) in
                     R.heq (mx x') m' /\ M.colours_only (mx x) m' /\ x'.ph == T.Marking /\ stx x' == stx x /\
+                    x'.ms == None /\
                     pa.T.inv T.Marking x.w.cmaj (stx x) /\ T.inv_frame_at byte_rep pa T.Marking x.w.cmaj (stx x) x'.w.cmaj /\
                     (forall (y: nat). M.col_of m' y =!= M.col_of (mx x) y ==> iu x y == true /\ M.dark (M.col_of m' y)) /\
                     (forall (y: nat). (M.col_of m' y == M.Blue <==> M.col_of (mx x) y == M.Blue))))
   = holds_elim x d;
     grey_found x d;
     let t = fg x in
-    BM.scan_obj_cabs x.w.cmaj t;
-    let x' = step pc x ESlice in
-    assert (x'.w.cmaj == BM.scan_obj x.w.cmaj (obj_of t));
+    let x' = step pc x (ESlice (slm x)) in
+    BM.obj_moves_bytes x.w.cmaj (mx x) t;
+    assert (pc.m == BM.bmark);
+    assert (x'.w.cmaj == fst (T.mmoves BM.bmark x.w.cmaj None (slm x)));
     let m' = TM.tmslice_with (mx x) t in
-    R.heq_sym (mx x') m';
+    R.heq_sym m' (mx x');
     slice_cols (mx x) t;
     let col (y: nat) : Lemma (M.col_of m' y =!= M.col_of (mx x) y ==> iu x y == true /\ M.dark (M.col_of m' y))
       = TM.edge_b_iff (mx x) t y in
     FStar.Classical.forall_intro col;
-    cok_hyps x ESlice
+    cok_hyps x (ESlice (slm x))
 
 let slice_blk (x: config pc) (d: dsc) (y: nat)
-  : Lemma (requires slpre x d /\ Some? (d.db y) /\ R.heq (mx (step pc x ESlice)) (TM.tmslice_with (mx x) (fg x)) /\
-                    iu (step pc x ESlice) y == iu x y)
-          (ensures bk (step pc x ESlice) (dslice x d) y (Some?.v ((dslice x d).db y)))
+  : Lemma (requires slpre x d /\ Some? (d.db y) /\ R.heq (mx (step pc x (ESlice (slm x)))) (TM.tmslice_with (mx x) (fg x)) /\
+                    iu (step pc x (ESlice (slm x))) y == iu x y)
+          (ensures bk (step pc x (ESlice (slm x))) (dslice x d) y (Some?.v ((dslice x d).db y)))
   = holds_elim x d;
     holds_blk x d y;
     let b = Some?.v (d.db y) in
-    let x' = step pc x ESlice in
+    let x' = step pc x (ESlice (slm x)) in
     let t = fg x in
     let b' = gslice x t y b in
     let d' = dslice x d in
@@ -256,10 +265,10 @@ let slice_blk (x: config pc) (d: dsc) (y: nat)
 let step_slice (x: config pc) (d: dsc)
   : Lemma (requires slpre x d)
           (ensures M.col_of (mx x) (fg x) == M.Grey /\ Some? (d.db (fg x)) /\
-                   holds (step pc x ESlice) (dslice x d))
+                   holds (step pc x (ESlice (slm x))) (dslice x d))
   = grey_found x d;
     slice_facts x d;
-    let x' = step pc x ESlice in
+    let x' = step pc x (ESlice (slm x)) in
     let d' = dslice x d in
     recol_after x x' d (TM.tmslice_with (mx x) (fg x));
     let bl (y: nat) : Lemma (Some? (d'.db y) ==> bk x' d' y (Some?.v (d'.db y)))

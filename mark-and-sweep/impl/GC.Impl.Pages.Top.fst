@@ -217,7 +217,8 @@ fn alloc_top (heap: heap_t) (t: pstate_t) (pr: R.ref U8.t) (cr: R.ref U64.t)
 fn handover_top (heap: heap_t) (t: pstate_t) (pr: R.ref U8.t) (cr: R.ref U64.t)
   (#sty: erased style) (#es: erased (list event))
   requires crep heap t pr cr sty es **
-           pure ((CP.xc es).stopped == false /\ T.Marking? (CP.xc es).ph /\ T.mark_done (mj (CP.xc es)))
+           pure ((CP.xc es).stopped == false /\ T.Marking? (CP.xc es).ph /\ T.mark_done (mj (CP.xc es)) /\
+                 None? (scan_of (CP.xc es)))
   ensures crep heap t pr cr sty (L.append es [EHandover]) **
           pure (CR.allowed CP.pc sty (CP.xc es) EHandover /\
                 CP.xc (L.append es [EHandover]) == step CP.pc (CP.xc es) EHandover)

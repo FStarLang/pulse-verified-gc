@@ -124,17 +124,29 @@ let ok_start (sty: style) (x: config fc) (d: dsc)
   = reveal_holds ();
     mutator_wd x d EStart
 
-let ok_slice (sty: style) (x: config fc) (d: dsc) (t: nat)
-  : Lemma (requires holds x d /\ d.dph == T.Marking /\ M.is_block (mk d.dst) t /\ M.col_of (mk d.dst) t == M.Grey)
-          (ensures ok_at sty x ESlice)
-  = reveal_holds ();
-    mutator_wd x d ESlice;
-    mark_done_wd x d
+/// The object's moves are allowed on any heap with the same headers and words.
+let obj_moves_ok (m h: M.mheap) (t: nat)
+  : Lemma (requires R.heq m h /\ M.is_block h t /\ M.col_of h t == M.Grey)
+          (ensures Cons? (GC.Spec.Top.ByteMark.obj_mv h t) /\ T.moves_ok m None (GC.Spec.Top.ByteMark.obj_mv h t))
+  = GC.Spec.Top.ByteMark.obj_moves_model h t;
+    GC.Spec.Top.MarkMoves.moves_ok_heq m h None (GC.Spec.Top.ByteMark.obj_mv h t)
+
+let ok_slice (sty: style) (x: config fc) (d: dsc) (t: nat) (mvs: list T.move)
+  : Lemma (requires holds x d /\ d.dph == T.Marking /\ M.is_block (mk d.dst) t /\ M.col_of (mk d.dst) t == M.Grey /\
+                    mvs == GC.Spec.Top.ByteMark.obj_mv (mk d.dst) t)
+          (ensures ok_at sty x (ESlice mvs))
+  = mj_wd x d;
+    obj_moves_ok (mj x) (mk d.dst) t;
+    reveal_holds ();
+    assert (scan_of x == None);
+    assert (enabled fc x (ESlice mvs));
+    mutator_wd x d (ESlice mvs)
 
 let ok_handover (sty: style) (x: config fc) (d: dsc)
   : Lemma (requires holds x d /\ d.dph == T.Marking /\ T.no_grey (mk d.dst))
           (ensures ok_at sty x EHandover)
   = reveal_holds ();
+    assert (scan_of x == None);
     mutator_wd x d EHandover;
     mark_done_wd x d
 

@@ -28,6 +28,7 @@ open GC.Spec.Top.PWInc
 open GC.Spec.Top.PWIncB
 open GC.Spec.Top.PWList
 module M = GC.Spec.Top.Heap
+module PWK = GC.Spec.Top.PWMark
 module T = GC.Spec.Top.Iface
 module L = FStar.List.Tot
 module RA = GC.Spec.Top.RunApp
@@ -40,13 +41,21 @@ module W = GC.Spec.Top.Word
 
 #set-options "--fuel 0 --ifuel 1 --z3rlimit 20"
 
+/// Young allocations, minor collections and root changes keep the phase.
+let ph_kept (x: config pc) (e: event)
+  : Lemma (requires EYoungAlloc? e \/ EMinor? e \/ ERoots? e) (ensures (step pc x e).ph == x.ph)
+  = ()
+
+let ph_17_21 () : Lemma ((x21 ()).ph == (x17 ()).ph)
+  = ph_kept (x17 ()) (e10 ()); ph_kept (x18 ()) e11; ph_kept (x19 ()) EMinor; ph_kept (x20 ()) (e20 ())
+
 /// **The sweep has a step**: A is in use and unswept when it starts.
 let ksw_pos () : Lemma (requires pw_room /\ cok) (ensures ksw () > 0)
   = c16 (); c17 (); c21 (); distinct ();
     holds_elim (x16 ()) (dM M.Black M.Black M.Black);
     holds_blk (x16 ()) (dM M.Black M.Black M.Black) (xA ());
     assert (unsw (x17 ()) (xA ()) == true);
-    assert ((x21 ()).ph == (x17 ()).ph);
+    ph_17_21 ();
     holds_elim (x21 ()) (d21 ());
     assert (unsw (x21 ()) (xA ()) == true);
     let T.Sweeping p = (x21 ()).ph in
@@ -68,7 +77,7 @@ let es_is () : Lemma (es_inc () == es3 (pre21 ()) (ksw ()) (post ())) = ()
 
 let pre7 () : GTot (list event) = [e0; e1; e2 (); e3; e4 (); e5 (); e6 ()]
 let mid14 () : GTot (list event) =
-  [EStart; e8 (); e9 (); e10 (); e11; EMinor; ESlice; ESlice; ESlice; EHandover; e10 (); e11; EMinor; e20 ()]
+  [EStart; e8 (); e9 (); e10 (); e11; EMinor; PWK.esl (x13 ()); PWK.esl (x14 ()); PWK.esl (x15 ()); EHandover; e10 (); e11; EMinor; e20 ()]
 
 #push-options "--fuel 24"
 let shape () : Lemma (pre21 () == L.append (pre7 ()) (mid14 ()) /\ L.length (pre7 ()) == 7 /\
@@ -134,24 +143,34 @@ let inc_every_event () : Lemma (requires pw_room /\ cok) (ensures every_event (e
 /// The configurations by index
 /// ---------------------------------------------------------------------------
 
-let mid_a () : GTot (list event) = [EStart; e8 (); e9 (); e10 (); e11; EMinor; ESlice]
-let mid_b () : GTot (list event) = [ESlice; ESlice; EHandover; e10 (); e11; EMinor; e20 ()]
+let mid_a () : GTot (list event) = [EStart; e8 (); e9 (); e10 (); e11; EMinor; PWK.esl (x13 ())]
+let mid_b () : GTot (list event) = [PWK.esl (x14 ()); PWK.esl (x15 ()); EHandover; e10 (); e11; EMinor; e20 ()]
 
 #push-options "--fuel 16"
 let mid_split () : Lemma (mid14 () == L.append (mid_a ()) (mid_b ()) /\ L.length (mid_a ()) == 7 /\ L.length (mid_b ()) == 7) = ()
 #pop-options
 
 #push-options "--fuel 9"
+/// The positions of a list of 7 events, over variables (the slices' events
+/// are then not unfolded).
+let idx7v (a0 a1 a2 a3 a4 a5 a6: event)
+  : Lemma (let l = [a0; a1; a2; a3; a4; a5; a6] in
+           L.index l 0 == a0 /\ L.index l 1 == a1 /\ L.index l 2 == a2 /\ L.index l 3 == a3 /\
+           L.index l 4 == a4 /\ L.index l 5 == a5 /\ L.index l 6 == a6)
+  = ()
+
 let idx7 () : Lemma (L.index (pre7 ()) 0 == e0 /\ L.index (pre7 ()) 1 == e1 /\ L.index (pre7 ()) 2 == e2 () /\
                      L.index (pre7 ()) 3 == e3 /\ L.index (pre7 ()) 4 == e4 () /\ L.index (pre7 ()) 5 == e5 () /\
                      L.index (pre7 ()) 6 == e6 () /\
                      L.index (mid_a ()) 0 == EStart /\ L.index (mid_a ()) 1 == e8 () /\ L.index (mid_a ()) 2 == e9 () /\
                      L.index (mid_a ()) 3 == e10 () /\ L.index (mid_a ()) 4 == e11 /\ L.index (mid_a ()) 5 == EMinor /\
-                     L.index (mid_a ()) 6 == ESlice /\
-                     L.index (mid_b ()) 0 == ESlice /\ L.index (mid_b ()) 1 == ESlice /\ L.index (mid_b ()) 2 == EHandover /\
+                     L.index (mid_a ()) 6 == PWK.esl (x13 ()) /\
+                     L.index (mid_b ()) 0 == PWK.esl (x14 ()) /\ L.index (mid_b ()) 1 == PWK.esl (x15 ()) /\ L.index (mid_b ()) 2 == EHandover /\
                      L.index (mid_b ()) 3 == e10 () /\ L.index (mid_b ()) 4 == e11 /\ L.index (mid_b ()) 5 == EMinor /\
                      L.index (mid_b ()) 6 == e20 ())
-  = ()
+  = idx7v e0 e1 (e2 ()) e3 (e4 ()) (e5 ()) (e6 ());
+    idx7v EStart (e8 ()) (e9 ()) (e10 ()) e11 EMinor (PWK.esl (x13 ()));
+    idx7v (PWK.esl (x14 ())) (PWK.esl (x15 ())) EHandover (e10 ()) e11 EMinor (e20 ())
 #pop-options
 
 /// Event `i` of the prefix.
@@ -173,8 +192,8 @@ let pre_idx () : Lemma (requires L.length (pre21 ()) == 21) (ensures L.index (pr
                         L.index (pre21 ()) 3 == e3 /\ L.index (pre21 ()) 4 == e4 () /\ L.index (pre21 ()) 5 == e5 () /\
                         L.index (pre21 ()) 6 == e6 () /\ L.index (pre21 ()) 7 == EStart /\ L.index (pre21 ()) 8 == e8 () /\
                         L.index (pre21 ()) 9 == e9 () /\ L.index (pre21 ()) 10 == e10 () /\ L.index (pre21 ()) 11 == e11 /\
-                        L.index (pre21 ()) 12 == EMinor /\ L.index (pre21 ()) 13 == ESlice /\ L.index (pre21 ()) 14 == ESlice /\
-                        L.index (pre21 ()) 15 == ESlice /\ L.index (pre21 ()) 16 == EHandover /\
+                        L.index (pre21 ()) 12 == EMinor /\ L.index (pre21 ()) 13 == PWK.esl (x13 ()) /\ L.index (pre21 ()) 14 == PWK.esl (x14 ()) /\
+                        L.index (pre21 ()) 15 == PWK.esl (x15 ()) /\ L.index (pre21 ()) 16 == EHandover /\
                         L.index (pre21 ()) 17 == e10 () /\ L.index (pre21 ()) 18 == e11 /\
                         L.index (pre21 ()) 19 == EMinor /\ L.index (pre21 ()) 20 == e20 ())
   = idx7 (); shape (); mid_split ();

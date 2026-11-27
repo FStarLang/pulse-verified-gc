@@ -150,6 +150,21 @@ let start_inc (st: wst) (y: M.mheap)
 /// What a slice needs of the block it scans
 /// ---------------------------------------------------------------------------
 
+/// The moves of the three slices: B and A scanned whole, K scanned whole
+/// (its infix header word is a word of bytes).
+let sl_B : list GC.Spec.Top.Iface.move = GC.Spec.Top.ByteMark.obj_moves xB 1 true
+let sl_A : list GC.Spec.Top.Iface.move = GC.Spec.Top.ByteMark.obj_moves xA 2 true
+let sl_K : list GC.Spec.Top.Iface.move = GC.Spec.Top.ByteMark.obj_moves xK 3 true
+
+let mv_B (st: wst) : Lemma (requires ff_room /\ Some? st.cb) (ensures GC.Spec.Top.ByteMark.obj_mv (mk st) xB == sl_B)
+  = xs ()
+
+let mv_A (st: wst) : Lemma (requires ff_room /\ Some? st.ca) (ensures GC.Spec.Top.ByteMark.obj_mv (mk st) xA == sl_A)
+  = xs ()
+
+let mv_K (st: wst) : Lemma (requires ff_room /\ Some? st.ck) (ensures GC.Spec.Top.ByteMark.obj_mv (mk st) xK == sl_K)
+  = xs ()
+
 let no_infix (st: wst) : Lemma (requires ff_room) (ensures GC.Spec.Top.ByteWrite.no_infix_tags (mk st))
   = xs ()
 

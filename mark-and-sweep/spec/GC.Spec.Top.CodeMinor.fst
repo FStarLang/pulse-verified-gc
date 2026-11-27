@@ -370,6 +370,11 @@ let covers_one (sty: style) (es: list event) (tv: seq U64.t) (n: nat) (obj: obj_
     memP_idx x.w.crem (o, j)
 #pop-options
 
+/// A field's address is word-aligned.
+let fld_aligned (obj: obj_addr) (j: nat)
+  : Lemma ((U64.v obj + j * 8) % U64.v mword == 0)
+  = FStar.Math.Lemmas.lemma_mod_plus (U64.v obj) j 8
+
 /// **The table covers** every young pointer of a block in use for the
 /// phase's allocator.
 let tbl_covers (sty: style) (es: list event) (tv: seq U64.t) (n: nat)
@@ -377,6 +382,7 @@ let tbl_covers (sty: style) (es: list event) (tv: seq U64.t) (n: nat)
           (ensures ref_table_covers_with (mtal (CP.xc es)).P.free (CP.hof (CP.xc es)) tv n)
   = let x = CP.xc es in
     let g = CP.hof x in
+    FStar.Classical.forall_intro_2 fld_aligned;
     let one (obj: obj_addr) (j: nat)
       : Lemma (is_block g obj /\ not ((mtal x).P.free g obj) /\ scannable g obj /\
                j < U64.v (wosize_of_object obj g) /\ U64.v obj + j * 8 + 8 <= heap_size /\

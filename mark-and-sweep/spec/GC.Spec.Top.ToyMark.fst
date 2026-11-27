@@ -4,14 +4,17 @@
 ///
 /// Satisfiability of `mark_ok` and `barrier_ok` (GC.Spec.Top.Iface).
 ///
-/// The mark keeps its state in the colours: `tmstart` greys every white
-/// object in outside_refs; `tmslice` takes the lowest grey block, greys its
-/// white children and blackens it.  The barrier greys the overwritten
+/// The mark's state is the scan, and a move is the model's move
+/// (`tmmove`); `tmstart` greys every white object in outside_refs.
+/// `tmslice` (the lowest grey block's children greyed, the block
+/// blackened, as a whole) is kept with its model proofs: the byte mark's
+/// account of akhil's whole-object slice uses it.  The barrier greys the overwritten
 /// target while marking, then stores, and remembers every field of a
 /// scannable block that receives a young pointer.
 ///
-/// Proved: `toy_mark_ok` (the snapshot invariant is established by the start
-/// and kept by every slice, and a slice decreases the measure),
+/// Proved: `toy_mark_ok` (the start establishes the snapshot invariant; a
+/// move is the model's), `tmslice_m` (the whole-object slice keeps the
+/// invariant and decreases the measure),
 /// `toy_barrier_ok`.
 
 module GC.Spec.Top.ToyMark
@@ -138,7 +141,11 @@ let tmslice (h: mheap) : GTot mheap =
 
 let tmstart_c (cw: cworld mheap mheap) : GTot mheap = tmstart (tview cw)
 
-let tmark : mark mheap mheap = { mstart = tmstart_c; mslice = tmslice }
+/// A move: the model's move itself; the state is the scan.
+let tmmove (h: mheap) (sc: scan) (mv: move) : mheap & scan = (move_heap h sc mv, move_scan sc mv)
+
+let tmark : mark mheap mheap = {
+  mstate = scan; mscan = (fun sc -> sc); mnone = None; mstart = tmstart_c; mmove = tmmove }
 
 /// Recolouring keeps resolve, pointer fields and edges.
 let colours_only_edges (h h': mheap)
@@ -363,14 +370,15 @@ let tmslice_m (h: mheap) (snap allocd: nat -> prop)
     in
     FStar.Classical.move_requires pre ()
 
-let tmslice_ok (h: mheap) (snap allocd: nat -> prop) : Lemma (mark_slice_at toy_rep tmark h snap allocd)
-  = tmslice_m h snap allocd;
-    toy_rep_id ();
-    lifted_id toy_rep (mark_slice_pre snap allocd) h (tmslice h) (mark_slice_post snap allocd)
+/// A move meets the contract: it is the model's move.
+let tmove_ok (h: mheap) (ms: tmark.mstate) (mv: move) : Lemma (mark_move_at toy_rep tmark h ms mv)
+  = toy_rep_id ();
+    id_repr toy_rep (move_heap h ms mv) (move_heap h ms mv);
+    forall_repr_id toy_rep h (mark_move_m toy_rep tmark h ms mv)
 
 let toy_mark_ok () : Lemma (mark_ok toy_rep tmark)
   = FStar.Classical.forall_intro tmstart_ok;
-    FStar.Classical.forall_intro_3 tmslice_ok
+    FStar.Classical.forall_intro_3 tmove_ok
 
 /// ---------------------------------------------------------------------------
 /// The barrier
