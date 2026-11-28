@@ -7,8 +7,11 @@
 /// instance for the phase (`FFReplay.ptal`: `FFPromote.fftal`), on the heap
 /// `gl h st`, forwarding the young pointers the model resolves among the
 /// roots and remembered slots (`PagesLive.roots_of`).  It reports
-/// `OutOfRoom` exactly when the promotion refused a live object
-/// (`PromoteRun.wit`); otherwise it returns akhil's pointer update of the
+/// `OutOfRoom` exactly when the promotion left an object it attempted
+/// unforwarded: a root, or a field of a queued object, not covered
+/// (`closure`, the negation of akhil's `cheney_no_oom`; design doc §18,
+/// U4).  Its last attempt failed, so some live object was refused
+/// (`PromoteRun.wit`, `oor_ok`).  Otherwise it returns akhil's pointer update of the
 /// promoted heap (`Promote.collect`), the free-list head, the roots
 /// forwarded and the forwarding map read on the model: the lookup in the
 /// list of promotions (young block, copy) the queue records
@@ -63,6 +66,12 @@ module FW = GC.Spec.Pages.Promote.Follow
 /// The component
 /// ---------------------------------------------------------------------------
 
+/// No object the promotion attempted is left unforwarded: every root, and
+/// every field of every queued object, is covered.
+let closure (ms: minor_state) (cs: P.gstate U64.t) (roots: Seq.seq U64.t) : prop =
+  (forall (i: nat). i < Seq.length roots ==> PR.covered ms cs (Seq.index roots i)) /\
+  PR.scanned ms cs (Seq.length cs.P.queue)
+
 /// **The minor collection.**
 let pcollect (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state) : GTot (T.minor_result heap ffk ffa) =
   let ms = cw.T.cyng in
@@ -71,7 +80,7 @@ let pcollect (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state) : GT
   let w = BM.cview cw in
   let roots = LV.roots_of w in
   let cs = P.promote tl ms g0 st.fp roots in
-  if FStar.IndefiniteDescription.strong_excluded_middle (PR.wit tl ms (LV.live w ms) g0 st.fp cs.P.queue)
+  if not (FStar.IndefiniteDescription.strong_excluded_middle (closure ms cs roots))
   then T.OutOfRoom
   else
     let r = P.collect tl ms g0 st.fp roots in
@@ -340,12 +349,14 @@ let oor_from (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state) (w: 
             T.alloc_fold byte_rep ffa ph cw.T.cmaj st w.M.yng ys == None)
 #pop-options
 
-/// **A refused promotion justifies `OutOfRoom`.**
+/// **An object left unforwarded justifies `OutOfRoom`**: the promotion ends
+/// in a refusal or in the closure (`run_done`).
 let oor_ok (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state) (w: M.world)
   : Lemma (requires T.cviews byte_rep cw w /\ T.minor_pre ffa ph st cw.T.cmaj w /\
                     (let wc = BM.cview cw in
-                     let cs = P.promote (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) st.fp (LV.roots_of wc) in
-                     PR.wit (ptal ph st) cw.T.cyng (LV.live wc cw.T.cyng) (gl cw.T.cmaj st) st.fp cs.P.queue))
+                     let roots = LV.roots_of wc in
+                     let cs = P.promote (ptal ph st) cw.T.cyng (gl cw.T.cmaj st) st.fp roots in
+                     ~(closure cw.T.cyng cs roots)))
           (ensures T.oor_justified byte_rep ffa ph st cw w)
   = let ms = cw.T.cyng in
     let wc = BM.cview cw in
@@ -353,6 +364,7 @@ let oor_ok (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state) (w: M.
     let g0 = gl cw.T.cmaj st in
     let cs = P.promote tl ms g0 st.fp (LV.roots_of wc) in
     run_done ph st cw w;
+    assert (PR.wit tl ms (LV.live wc ms) g0 st.fp cs.P.queue);
     let k = FStar.IndefiniteDescription.indefinite_description_ghost nat
               (fun k -> exists (x: U64.t).
                  k <= Seq.length cs.P.queue /\ Seq.mem x (minor_objects ms) /\ ~(is_infix_in_minor ms x) /\

@@ -123,9 +123,14 @@ let upw_id (free: free_def) (g: heap)
 /// The collection
 /// ---------------------------------------------------------------------------
 
-let no_wit (#s: Type0) (a: P.tal s) (live: U64.t -> prop) (g: heap) (st: s) (q: seq U64.t)
-  : Lemma (~(PR.wit a ms0 live g st q))
-  = FStar.Classical.forall_intro (fun (x: U64.t) -> ms0_empty x)
+/// Nothing is left unforwarded: the empty nursery has no object to attempt.
+let closure_empty (cs: P.gstate U64.t) (roots: seq U64.t)
+  : Lemma (requires Seq.length cs.P.queue == 0) (ensures closure ms0 cs roots)
+  = let one (addr: U64.t) : Lemma (PR.covered ms0 cs addr)
+      = PR.covered_def ms0 cs addr;
+        ms0_empty addr;
+        ms0_empty (resolve_minor ms0 addr) in
+    FStar.Classical.forall_intro one
 
 #push-options "--fuel 1"
 let no_copies (q: seq U64.t) (fwd: forwarding_map)
@@ -145,7 +150,7 @@ let pcollect_empty (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state
     let w = BM.cview cw in
     let roots = LV.roots_of w in
     promote_id tl g0 st.fp roots;
-    no_wit tl (LV.live w ms0) g0 st.fp (P.promote tl ms0 g0 st.fp roots).P.queue;
+    closure_empty (P.promote tl ms0 g0 st.fp roots) roots;
     upw_id tl.P.free g0;
     let cs = P.promote tl ms0 g0 st.fp roots in
     no_copies cs.P.queue cs.P.fwd

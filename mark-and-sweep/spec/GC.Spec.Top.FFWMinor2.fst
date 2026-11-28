@@ -747,6 +747,50 @@ let copies2 (q: seq U64.t) (fwd: forwarding_map) (f: nat)
 let maddr_obj_of (k: nat) : Lemma (requires pos k + 8 < heap_size) (ensures maddr (obj_of k) == k)
   = maddr_obj k
 
+/// An address that is not infix is covered when both nursery objects are
+/// forwarded.
+let cov2 (ms: minor_state) (v w: M.value) (cs: P.gstate U64.t) (addr: U64.t)
+  : Lemma (requires ff_room /\ Y.yrepr (YW.ym2 v w) ms /\ cs.P.fwd yo1 <> 0UL /\ cs.P.fwd yo2 <> 0UL /\
+                    ~(is_infix_in_minor ms addr))
+          (ensures PR.covered ms cs addr)
+  = PR.covered_def ms cs addr;
+    FStar.Classical.move_requires (only_two ms v w) (resolve_minor ms addr)
+
+/// The closure, from its four instances.
+let closure_of4 (ms: minor_state) (cs: P.gstate U64.t) (r: seq U64.t)
+  : Lemma (requires roots2 r /\
+                    Seq.length cs.P.queue == 2 /\ Seq.index cs.P.queue 0 == yo2 /\ Seq.index cs.P.queue 1 == yo1 /\
+                    PR.nsc ms yo1 == 1 /\ PR.nsc ms yo2 == 1 /\
+                    PR.covered ms cs yo1 /\ PR.covered ms cs yo2 /\
+                    PR.covered ms cs (PR.fld ms yo1 0) /\ PR.covered ms cs (PR.fld ms yo2 0))
+          (ensures closure ms cs r)
+  = let rt (i: nat) : Lemma (i < Seq.length r ==> PR.covered ms cs (Seq.index r i))
+      = if i = 0 then () else if i = 1 then () else () in
+    FStar.Classical.forall_intro rt;
+    let sc (j i: nat)
+      : Lemma (j < Seq.length cs.P.queue /\ j < Seq.length cs.P.queue /\ i < PR.nsc ms (Seq.index cs.P.queue j) ==>
+               PR.covered ms cs (PR.fld ms (Seq.index cs.P.queue j) i))
+      = if j = 0 then (if i = 0 then () else ())
+        else if j = 1 then (if i = 0 then () else ())
+        else () in
+    FStar.Classical.forall_intro_2 sc
+
+/// **Nothing is left unforwarded** (`FFMinor.closure`): both roots and both
+/// fields are covered.
+let closure2 (ms: minor_state) (v w: M.value) (cs: P.gstate U64.t) (r: seq U64.t)
+  : Lemma (requires ff_room /\ Y.yrepr (YW.ym2 v w) ms /\ hv v /\ hv w /\ roots2 r /\
+                    Seq.length cs.P.queue == 2 /\ Seq.index cs.P.queue 0 == yo2 /\ Seq.index cs.P.queue 1 == yo1 /\
+                    cs.P.fwd yo1 <> 0UL /\ cs.P.fwd yo2 <> 0UL)
+          (ensures closure ms cs r)
+  = nursery ms v w;
+    cov2 ms v w cs yo1; cov2 ms v w cs yo2;
+    out_none ms (to_minor_offset (minor_read_field ms yo1 0));
+    out_none ms (to_minor_offset (minor_read_field ms yo2 0));
+    PR.fld_def ms yo1 0; PR.fld_def ms yo2 0;
+    PR.nsc_def ms yo1; PR.nsc_def ms yo2;
+    cov2 ms v w cs (PR.fld ms yo1 0); cov2 ms v w cs (PR.fld ms yo2 0);
+    closure_of4 ms cs r
+
 /// `pcollect`, unfolded.
 let pcollect_unfold (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state)
   : Lemma (let ms = cw.T.cyng in
@@ -755,7 +799,7 @@ let pcollect_unfold (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_stat
            let w = BM.cview cw in
            let roots = LV.roots_of w in
            let cs = P.promote tl ms g0 st.fp roots in
-           ~(PR.wit tl ms (LV.live w ms) g0 st.fp cs.P.queue) ==>
+           closure ms cs roots ==>
            pcollect ph st cw ==
              (let r = P.collect tl ms g0 st.fp roots in
               let cps = Q0.copies cs.P.queue cs.P.fwd (Seq.length cs.P.queue) in
@@ -778,7 +822,7 @@ let assemble (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state) (v w
                      let wv = BM.cview cw in
                      let roots = LV.roots_of wv in
                      let cs = P.promote tl ms g0 st.fp roots in
-                     ~(PR.wit tl ms (LV.live wv ms) g0 st.fp cs.P.queue) /\
+                     closure ms cs roots /\
                      update_pointers_with tl.P.free cs.P.major cs.P.fwd == cs.P.major /\
                      cs.P.st == st.fp /\ brepr (m2 ph v w m f) cs.P.major /\
                      F.fwd_of (Q0.copies cs.P.queue cs.P.fwd (Seq.length cs.P.queue)) == F.fwd_of (cps2 f)))
@@ -815,7 +859,6 @@ let pcollect_two (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state) 
     roots_of2 cw v w rest;
     promote2 ph st ms v w g0 st.fp m f roots;
     let cs = P.promote tl ms g0 st.fp roots in
-    no_wit ph st ms v w (LV.live wv ms) g0 st.fp m f cs.P.queue;
     head_after m f (c1 ph f) w;
     head_after (promoted m f (c1 ph f) w) (f - 2) (c2 ph f) v;
     hv_promoted m f (c1 ph f) w;
@@ -825,6 +868,7 @@ let pcollect_two (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state) 
     brep_size m; brep_block m 0; msize_pos (f - 1); msize_pos (f - 3);
     below_top m f;
     objp_facts (f - 1) (f - 3); objp_facts (f - 3) (f - 1);
+    closure2 ms v w cs roots;
     copies2 cs.P.queue cs.P.fwd f;
     fwd_eq cs.P.queue cs.P.fwd f;
     assemble ph st cw v w m f

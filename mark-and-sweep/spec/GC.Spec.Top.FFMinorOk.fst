@@ -257,8 +257,7 @@ let done_post (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state) (w:
 
 let dpre_intro (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state) (w: M.world)
   : Lemma (requires T.cviews byte_rep cw w /\ T.minor_pre ffa ph st cw.T.cmaj w /\
-                    ~(PR.wit (ptal ph st) cw.T.cyng (LV.live (BM.cview cw) cw.T.cyng) (gl cw.T.cmaj st) st.fp
-                        (D.cs_of ph st cw).P.queue))
+                    PM.closure cw.T.cyng (D.cs_of ph st cw) (LV.roots_of (BM.cview cw)))
           (ensures D.dpre ph st cw w)
   = reveal_opaque (`%D.dpre) (D.dpre ph st cw w)
 
@@ -272,9 +271,8 @@ let minor_m_ok (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state) (w
                                  | T.Done hc' st' roots' fwd ->
                                    exists (h': M.mheap). byte_rep.R.repr h' hc' /\
                                      T.minor_post_done ffa ph st cw.T.cmaj w hc' st' roots' fwd h'))
-      = if FStar.IndefiniteDescription.strong_excluded_middle
-             (PR.wit (ptal ph st) cw.T.cyng (LV.live (BM.cview cw) cw.T.cyng) (gl cw.T.cmaj st) st.fp
-                (D.cs_of ph st cw).P.queue)
+      = if not (FStar.IndefiniteDescription.strong_excluded_middle
+                  (PM.closure cw.T.cyng (D.cs_of ph st cw) (LV.roots_of (BM.cview cw))))
         then PM.oor_ok ph st cw w
         else begin
           dpre_intro ph st cw w;

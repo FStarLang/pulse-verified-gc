@@ -3,8 +3,8 @@
 /// promotion, the blocks in use, the forwarding map
 /// ---------------------------------------------------------------------------
 ///
-/// When the promotion refused no live object (`PromoteRun.wit` fails), at
-/// the end of promotion the replay invariant holds with the queue's copies
+/// When the promotion left no object it attempted unforwarded
+/// (`FFMinor.closure`), at the end of promotion the replay invariant holds with the queue's copies
 /// (`end_ri`), and:
 ///   * the blocks in use after the collection are those before and the
 ///     copies (`done_in_use`);
@@ -65,13 +65,12 @@ let cps_of (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state) : GTot
 [@@"opaque_to_smt"]
 let dpre (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state) (w: M.world) : prop =
   T.cviews byte_rep cw w /\ T.minor_pre ffa ph st cw.T.cmaj w /\
-  ~(PR.wit (ptal ph st) cw.T.cyng (LV.live (BM.cview cw) cw.T.cyng) (gl cw.T.cmaj st) st.fp (cs_of ph st cw).P.queue)
+  PM.closure cw.T.cyng (cs_of ph st cw) (LV.roots_of (BM.cview cw))
 
 let dpre_elim (ph: T.phase U64.t) (st: ffst) (cw: T.cworld heap minor_state) (w: M.world)
   : Lemma (requires dpre ph st cw w)
           (ensures T.cviews byte_rep cw w /\ T.minor_pre ffa ph st cw.T.cmaj w /\
-                   ~(PR.wit (ptal ph st) cw.T.cyng (LV.live (BM.cview cw) cw.T.cyng) (gl cw.T.cmaj st) st.fp
-                       (cs_of ph st cw).P.queue))
+                   PM.closure cw.T.cyng (cs_of ph st cw) (LV.roots_of (BM.cview cw)))
   = reveal_opaque (`%dpre) (dpre ph st cw w)
 
 /// The promotion's state at its end.

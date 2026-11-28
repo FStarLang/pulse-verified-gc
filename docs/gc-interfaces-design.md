@@ -4261,3 +4261,63 @@ Correct) and the Pulse wrappers `GC.Impl.Pages.Top`,
 warnings) at Z3 seeds 0, 1 and 2 without `--retry`; no admits or assumes,
 rlimits 20 or 40.  Open for step 4: the `scan_field` guard noted under
 ByteMark above.
+
+### 18.11 U4: the first-fit minor collection is akhil's (checkpoint, 2026-11-28)
+
+Order changed by the user on 2026-11-28: U4 first, then step 4 (mark and
+barrier) on first-fit, with the minor collection inside the start wrapper;
+the pages marking comes later as its own step.
+
+- **The equality** (new module `GC.Spec.Top.FFCheney`): the first-fit
+  component's promotion, `Pages.Promote.promote (FFPromote.fftal ph)`, is
+  akhil's `cheney_promote (gph ph)` (`promote_all_eq`: the major heap, the
+  free-list head and the forwarding map), and the collection
+  `Pages.Promote.collect (fftal ph)` is his `cheney_collect_spec_with (gph
+  ph) (ffree_of ph)` field by field (`collect_eq`: major heap, free-list
+  head, rewritten roots, forwarding map, reset nursery).  One promotion is
+  equal by definition (`fftal ph` allocates with `AP.alloc_at (gph ph)`,
+  as his `promote_object` does); the four loops (`normal_eq`, `one_eq`,
+  `fields_eq`, `roots_eq`, `scan_eq`) by induction, reading his abstract
+  loop functions through his exported equation lemmas only.
+- **When the first-fit collection reports `OutOfRoom`** (the user's
+  decision, 2026-11-28): exactly when the actual promotion leaves an
+  object it attempted unforwarded: a root, or a field of a queued object,
+  not covered (`FFMinor.closure`, the negation of akhil's
+  `cheney_no_oom`).  It replaces the counterfactual `PromoteRun.wit`.
+  `OutOfRoom` stays justified: the promotion ends in a refusal or in the
+  closure (`run_done`), so without the closure a live object was refused
+  (`oor_ok`, unchanged from there on).  `Done` now starts from the closure
+  itself (`FFDone.dpre`, `FFMinorOk.minor_m_ok`).  The witness runs: the
+  empty nursery has nothing to attempt (`FFWMinor0.closure_empty`); the two
+  young objects of the incremental run are both forwarded and nothing in
+  that nursery is infix (`FFWMinor2.closure2`).
+- **The flag** (`FFCheney.no_oom_closure`): akhil's `minor_collect_with`
+  returns `ok` only with `cheney_no_oom`, and that is the closure (his
+  successors are the resolved fields, with no pointer test, as the loop
+  forwards them).  So when his code returns `ok`, the model's collection
+  is `Done` with his heap.  When it returns `not ok` his postcondition
+  says `cheney_oom`, which is counterfactual (a state from which finishing
+  gives the same end, where a promotion fails; a successful run has one
+  when some unreachable nursery object no longer fits at its end), so
+  nothing about the model follows: a wrapper ends the code's run there
+  without an event, and the theorems cover the run up to it.
+
+**A new gap: akhil's nursery precondition.**  `minor_collect_with` asks
+`collection_shape_with ph free ms s fp`, whose `minor_heap_shape` includes
+`minor_guards_complete` (every aligned nursery word reading as a non-infix
+header with room starts an object; his "trust assumption on the mutator")
+and `minor_infix_wf`.  The model's nurseries do not give
+`minor_guards_complete`: a field may hold an integer whose bits read as a
+header (§18.8, step 2; an OCaml integer can).  For pages, our own Pulse
+promotion was changed to ask only at the addresses it forwards; akhil's
+module is read-only.  So the first-fit `EMinor` wrapper is not built.
+Options (the user's decision):
+- (a) the wrapper takes `minor_heap_shape` as a precondition the caller
+  supplies (trusted, as akhil's runtime does); the end theorem is then
+  conditional on it, and it can be false of real nurseries;
+- (b) akhil weakens his precondition as was done for pages (ask the guards
+  and `follow_ok` only at the addresses forwarded); then the wrapper needs
+  no trusted assumption;
+- (c) a first-fit Pulse promotion of ours: the pages promotion (`Cheney`,
+  `Forward`, `TwoPass`, `Sim`) instantiated with first-fit's allocator;
+  new Pulse code, medium-large.
