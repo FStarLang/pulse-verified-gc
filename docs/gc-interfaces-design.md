@@ -3848,6 +3848,24 @@ wrappers), not silent assumptions:
   order of events, so policy needs no proof, only that it calls wrappers.
 - **Missing runtime features:** finalisers, weak references and ephemerons
   fail early (commit e56328ed); nothing about them is claimed.
+- **Gap: the first-fit nursery's shape at a minor collection** (the
+  user's decision, 2026-11-28, option (a) of §18.11).  The first-fit
+  minor wrapper calls akhil's `minor_collect_with`, whose precondition
+  asks of the nursery `minor_guards_complete` (every aligned word that
+  reads as a non-infix header with room starts an object) and
+  `minor_infix_wf` (every word that reads as an infix header lies in a
+  closure at its encoded offset).  Both are about every nursery word, not
+  only the objects, so a field holding an integer whose bits read as a
+  header can break them; the model's runs do not give them.  The wrapper
+  takes them as an explicit precondition the caller supplies (akhil's
+  "trust assumption on the mutator"); the rest of akhil's precondition
+  (`minor_wf`, the major half, the remembered set, the roots) is proved
+  from the run.  Only that wrapper (and the start wrapper, which runs a
+  minor collection first) asks it: the mark slice, the start of the cycle
+  and the barrier are called through entry points that take the major
+  heap and the mark state only.  Removing it is option (c) of §18.11 (our
+  own Pulse promotion, which asks the guards only at the addresses it
+  forwards).
 
 ### 18.6 akhil's run model, and what can be reused
 
@@ -4264,7 +4282,7 @@ ByteMark above.
 
 ### 18.11 U4: the first-fit minor collection is akhil's (checkpoint, 2026-11-28)
 
-Order changed by the user on 2026-11-28: U4 first, then step 4 (mark and
+Order changed by the user on 2026-11-28: U4 first, then step 1 (mark and
 barrier) on first-fit, with the minor collection inside the start wrapper;
 the pages marking comes later as its own step.
 
@@ -4321,3 +4339,97 @@ Options (the user's decision):
 - (c) a first-fit Pulse promotion of ours: the pages promotion (`Cheney`,
   `Forward`, `TwoPass`, `Sim`) instantiated with first-fit's allocator;
   new Pulse code, medium-large.
+
+The user chose (a) on 2026-11-28 (§18.5); (c) is estimated in §18.12.
+
+### 18.12 Step 1: first-fit mark and barrier (checkpoint, 2026-11-28)
+
+The first-fit generational code, wrapper by wrapper, as runs of the
+first-fit collector `CodeFF.fc` (new module `GC.Impl.FFGen`).  Each
+wrapper ensures the representation of the run one event longer.
+akhil's modules are unchanged and the specification is unchanged.
+
+- **The representation** `crepg c sty es` holds akhil's `is_gen_heap`,
+  `gen_phase` and `mark_state` at the model's scan (`CodeFFGen.spof`:
+  block `o`, next field `i` is `{cur = obj_of o; fld = i + 1}`), the table
+  (`tbl_e`: C's table of slot addresses with repeats, §18.8 U3), and the
+  model's run invariant (`CF.good`, the nursery `Fw.mst d b == cyng`,
+  `rem_ok`).  It does not hold akhil's `gc_state`: its `phase_shape` asks
+  the nursery's shape at every phase (§18.5).  The mark slice and the
+  barrier are called through entry points that ask only the major heap and
+  the mark state; `start_cycle`, which asks `gc_state`, is called right
+  after a minor collection, when the nursery is empty and its shape holds.
+- **L13, the major heap** (`CodeFFGen`): the first-fit allocator's shape at
+  each phase (`FFAlloc.ishape`, `mshape`, `sshape`) gives what akhil's
+  calls ask: idle the stop-the-world shape, while marking `heap_ok`, and at
+  every phase `major_shape_with (gph ph) (ffree_of ph)`.
+- **Mark** (`CodeFFMark`): akhil's `mark_slice` is one `ESlice` of its
+  moves (`slice_cfg`; no event when it moved nothing), the grey field read
+  through `SMk.minv_of`; when it reports marking over, the cache is empty,
+  so the model's `mark_done` holds and `EHandover` follows (`handover_ready`)
+  in the same wrapper.  Allocation and writes keep the cache (among
+  `mark_cache_darken`, `mark_cache_barrier_write`, `mark_cache_write`); a
+  minor collection while marking keeps it through `mark_cache_minor`.
+- **Start** (`CodeFFMark.start_cfg`, `CodeFFDup.start_roots_d`): the start
+  wrapper runs `EMinor` first, then darkens the rewritten young roots and
+  the caller's major roots.  akhil's darkening depends only on the members
+  of the root array (`darkened_mem`), so the array (rewritten prefix, then
+  the caller's array) need not be in the model's order.
+- **Barrier** (`CodeFFWrite`, `writeg`): as akhil builds `modify_at`: while
+  marking a scannable block, darken the old value
+  (`check_and_darken_bounded`, the overflow flag raised when the stack is
+  full), then store; append the slot exactly when akhil's
+  `modify_records` says.  A no-scan block is not darkened: the model's
+  write does not darken there, and the closure condition comes from
+  `mutator_ok`.  Outside marking the write keeps the sweep caches
+  (`same_heads`).
+- **Minor collection** (`CodeFFMinor`, `CodeFFDup`, `minorg`): akhil's
+  `minor_collect_with` on the program's young roots followed by the
+  table's young words (`rsd`); everything in its precondition but the
+  nursery's two conditions is proved from the run.  On `ok`, `EMinor` with
+  akhil's heap, the table emptied; otherwise the run ends with no event
+  (`stoppedg`, §18.11).
+- **The table's repeats (U3), closed without a specification change.**
+  C's table and akhil's `modify_records` record a slot again after young,
+  then integer, then young; the model remembers it once.  So the
+  collection runs on roots with repeats.  Two new lemmas show it ends the
+  same: first-fit never makes room for a size it refused
+  (`FFNoGrow.promote_fail_nofit`), and a repeated root is inert once its
+  first copy was handled (`FFRepeat.promote_rep`).
+- **Table full:** `allocg` (result 1) and `writeg` (false) do nothing and
+  add no event; the caller collects and retries.
+
+**Gaps.**  New: the nursery's two conditions (`minor_guards_complete`,
+`minor_infix_wf`), a trusted precondition of `minorg` and `startg` only
+(§18.5).  `minor_infix_wf` was not named in the option text of §18.11 but
+is part of the same `minor_heap_shape`, and the slot-repeat lemma uses it
+too (`CodeFFDup.ctx_ff`).  `startg` also asks the caller for its major
+roots as an array whose members are the major roots' words (`mr_ok`).
+
+**Option (c), estimate only** (the user asked; not built).  Our own Pulse
+promotion with the first-fit allocator, so that the trusted precondition
+goes:
+- akhil's `promote_one` can be reused unchanged: it asks only
+  `fl_ascending`, and its result is `promote_object`, equal to ours
+  (§18.11).  The guards would be asked only at the forwarded addresses, as
+  in the pages promotion.
+- New code: copies of `Pages.Forward`, `Pages.Cheney` and the minor part
+  of `Pages.TopMinor` (about 1000 lines) at the first-fit state, and the
+  spec's `Promote.Sim` and `Promote.TwoPass` (about 875 lines) generalised
+  from the pages state to the first-fit one (about 75 references to the
+  pages state).  About 4 modules, 1400–2000 lines.
+- While marking, the mark cache across the collection would then go
+  through `mark_cache_keeps_blocks` (no new greys, the old blocks kept),
+  since `mark_cache_minor` asks the nursery's shape.
+- The C runtime would switch its first-fit minor collection to the new
+  code, and must stay within 5% of the reference (the speed rule); the pages
+  promotion was faster than its reference, so this looks low risk.
+- Risk: low to medium.  The proofs follow existing ones closely; the
+  unknowns are the cache lemma above and the generalisation of
+  `Sim`/`TwoPass`.
+
+**Checks.**  New modules, each clean at Z3 seeds 0, 1 and 2 without
+`--retry`, no admits or assumes, rlimits 20 or 40:
+`GC.Spec.Top.FFNoGrow`, `FFRepeat`, `CodeFFGen`, `CodeFFWrite`,
+`CodeFFMark`, `CodeFFMinor`, `CodeFFDup`, `CodeFFGlue`, and
+`GC.Impl.FFGen`.  They are not yet in `ROOT_MODULES` (step 3).
